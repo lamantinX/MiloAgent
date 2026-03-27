@@ -483,6 +483,8 @@ class ContentGenerator:
         project: Dict,
         is_promotional: Optional[bool] = None,
         hub_reference: Optional[str] = None,
+        research_context: Optional[str] = None,
+        failure_rules: Optional[str] = None,
     ) -> str:
         """Generate a Reddit comment for a given post."""
         if is_promotional is None:
@@ -517,9 +519,11 @@ class ContentGenerator:
 
         tone_instruction = self._get_tone_instruction(tone_style)
 
-        # Gather research context, failure rules, hub reference (thread-safe copy)
-        research_context = getattr(self, "_research_context", "") or ""
-        failure_rules = getattr(self, "_failure_rules", "") or ""
+        # Gather research context, failure rules, hub reference (prefer params, fallback to instance)
+        if research_context is None:
+            research_context = getattr(self, "_research_context", "") or ""
+        if failure_rules is None:
+            failure_rules = getattr(self, "_failure_rules", "") or ""
         if hub_reference is None:
             hub_reference = getattr(self, "_hub_reference", "") or ""
 

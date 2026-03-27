@@ -1107,31 +1107,25 @@ class Orchestrator:
                     stage = "new"
                 opp["_community_stage"] = stage
 
-            # Inject research context for content enrichment
+            # Gather research context for content enrichment (thread-safe: local vars)
+            _research_ctx = ""
+            _failure_rules = ""
             try:
                 topic = opp.get("title", "") or opp.get("keyword", "")
-                ctx = self.research.get_context_for_topic(proj_name, topic)
-                self.content_gen._research_context = ctx or ""
+                _research_ctx = self.research.get_context_for_topic(proj_name, topic) or ""
 
-                # Inject failure avoidance rules
+                # Gather failure avoidance rules
                 sub = opp.get("subreddit_or_query", opp.get("subreddit", ""))
                 if sub:
                     patterns = self.db.get_failure_patterns(proj_name, sub)
                     if patterns:
-                        rules = "\n".join(
+                        _failure_rules = "\n".join(
                             f"- {p['avoidance_rule']}"
                             for p in patterns[:5]
                             if p.get("avoidance_rule")
                         )
-                        self.content_gen._failure_rules = rules
-                    else:
-                        self.content_gen._failure_rules = ""
-                else:
-                    self.content_gen._failure_rules = ""
             except Exception as e:
                 logger.debug(f"Research context injection failed: {e}")
-                self.content_gen._research_context = ""
-                self.content_gen._failure_rules = ""
 
             # Cross-pollination: 10% chance to hint at our hub in comments
             _hub_ref = ""
@@ -1177,8 +1171,13 @@ class Orchestrator:
                 else:
                     continue
 
-                if platform == "reddit" and _hub_ref:
-                    success = bot.act(opp, project, hub_reference=_hub_ref)
+                if platform == "reddit":
+                    success = bot.act(
+                        opp, project,
+                        hub_reference=_hub_ref,
+                        research_context=_research_ctx,
+                        failure_rules=_failure_rules,
+                    )
                 else:
                     success = bot.act(opp, project)
 
@@ -2298,7 +2297,7 @@ class Orchestrator:
             conn.execute("ANALYZE")
             # Prune opportunities older than 7 days (prevent unbounded growth)
             conn.execute(
-                "DELETE FROM opportunities WHERE discovered_at < datetime('now', '-7 days') AND status != 'acted'"
+                "DELETE FROM opportunities WHERE timestamp < datetime('now', '-7 days') AND status != 'acted'"
             )
             # Prune old decision_log entries (keep 7 days)
             conn.execute(

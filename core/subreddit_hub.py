@@ -360,13 +360,14 @@ Rules:
         """Check if we should post to a hub now."""
         # Check daily post limit
         try:
-            today_count = self.db.conn.execute(
+            row = self.db.conn.execute(
                 """SELECT COUNT(*) FROM actions
                    WHERE action_type = 'hub_post'
                    AND metadata LIKE ?
                    AND timestamp > datetime('now', '-24 hours')""",
                 (f'%"hub": "{hub["subreddit"]}"%',),
-            ).fetchone()[0]
+            ).fetchone()
+            today_count = row[0] if row else 0
             if today_count >= MAX_POSTS_PER_HUB_PER_DAY:
                 return False
         except Exception:
@@ -465,7 +466,7 @@ Rules:
                    AND timestamp > datetime('now', '-24 hours')""",
                 (f'%"hub": "{subreddit}"%', f'%"template_key": "{template_key}"%'),
             ).fetchone()
-            return row[0] > 0
+            return (row[0] if row else 0) > 0
         except Exception:
             return False
 

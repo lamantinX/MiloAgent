@@ -500,7 +500,8 @@ class RedditWebBot(BasePlatform):
             return int(m.group(1)) * 60
         return 10  # Safe fallback
 
-    def act(self, opportunity: Dict, project: Dict, hub_reference: str = "") -> bool:
+    def act(self, opportunity: Dict, project: Dict, hub_reference: str = "",
+            research_context: str = "", failure_rules: str = "") -> bool:
         """Generate, validate, and post a comment."""
         project_name = project.get("project", {}).get("name", "unknown")
 
@@ -553,6 +554,8 @@ class RedditWebBot(BasePlatform):
                 project=project,
                 is_promotional=is_promo,
                 hub_reference=hub_reference or None,
+                research_context=research_context or None,
+                failure_rules=failure_rules or None,
             )
 
             # Content validation

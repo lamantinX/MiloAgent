@@ -1342,6 +1342,11 @@ class WebDashboard:
             if not target:
                 raise HTTPException(status_code=404, detail=f"Account @{username} not found for {platform}")
             cookies_file = target.get("cookies_file", f"data/cookies/{platform}_{username}.json")
+            # Security: prevent directory traversal
+            cookies_file = os.path.abspath(cookies_file)
+            allowed_dir = os.path.abspath("data")
+            if not cookies_file.startswith(allowed_dir + os.sep):
+                raise HTTPException(status_code=400, detail="Invalid cookies file path")
             # Parse "name=value; name2=value2" format
             raw = raw_cookies.strip()
             if raw.startswith(("'", '"')) and raw.endswith(("'", '"')):
@@ -1679,8 +1684,10 @@ class WebDashboard:
                     # Cooldown info
                     cd = self.orch.account_mgr._cooldowns.get(key)
                     cooldown_remaining = 0
-                    if cd and cd > datetime.now():
-                        cooldown_remaining = int((cd - datetime.now()).total_seconds())
+                    if cd:
+                        now = datetime.utcnow()
+                        if cd > now:
+                            cooldown_remaining = int((cd - now).total_seconds())
 
                     result.append({
                         "username": username,
@@ -1787,27 +1794,31 @@ class WebDashboard:
             try:
                 since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
                 # Total opportunities discovered
-                total_opps = self.orch.db.conn.execute(
+                row = self.orch.db.conn.execute(
                     "SELECT COUNT(*) as c FROM opportunities WHERE timestamp > ?",
                     (since,),
-                ).fetchone()["c"]
+                ).fetchone()
+                total_opps = row["c"] if row else 0
                 # Pending
-                pending = self.orch.db.conn.execute(
+                row = self.orch.db.conn.execute(
                     "SELECT COUNT(*) as c FROM opportunities WHERE status='pending' AND timestamp > ?",
                     (since,),
-                ).fetchone()["c"]
+                ).fetchone()
+                pending = row["c"] if row else 0
                 # Acted on (have matching actions)
-                acted = self.orch.db.conn.execute(
+                row = self.orch.db.conn.execute(
                     "SELECT COUNT(*) as c FROM actions WHERE timestamp > ? AND success = 1",
                     (since,),
-                ).fetchone()["c"]
+                ).fetchone()
+                acted = row["c"] if row else 0
                 # Successful engagements (actions with non-empty metadata hinting at success)
-                success = self.orch.db.conn.execute(
+                row = self.orch.db.conn.execute(
                     """SELECT COUNT(*) as c FROM actions
                        WHERE timestamp > ? AND success = 1
                        AND action_type IN ('comment', 'post', 'seed_post', 'reply')""",
                     (since,),
-                ).fetchone()["c"]
+                ).fetchone()
+                success = row["c"] if row else 0
                 stages = [
                     {"name": "Discovered", "count": total_opps},
                     {"name": "Pending", "count": pending},
