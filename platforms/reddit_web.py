@@ -84,6 +84,9 @@ class RedditWebBot(BasePlatform):
         # Track subscribed subreddits to avoid re-subscribing every cycle
         self._subscribed_subs: set = set()
 
+        # Cache blocked subreddits (403/404) to avoid hammering them
+        self._blocked_subs: Dict[str, float] = {}  # sub -> unblock_timestamp
+
         # Load cookies if they exist
         self._load_cookies()
 
@@ -386,6 +389,11 @@ class RedditWebBot(BasePlatform):
         Uses self.session (with cookies) to avoid IP blocks on servers.
         Falls back to anonymous requests if session not available.
         """
+        # Skip subreddits that returned 403/404 recently (1 hour cooldown)
+        blocked_until = self._blocked_subs.get(subreddit.lower())
+        if blocked_until and time.time() < blocked_until:
+            return []
+
         url = f"{REDDIT_BASE}/r/{subreddit}/search.json"
         params = {
             "q": query,
@@ -425,14 +433,16 @@ class RedditWebBot(BasePlatform):
                     continue
 
                 if resp.status_code in (403, 404):
+                    # Block this sub for 1 hour to stop hammering
+                    self._blocked_subs[subreddit.lower()] = time.time() + 3600
                     ct = resp.headers.get("Content-Type", "")
                     if "html" in ct.lower():
                         logger.warning(
-                            f"Reddit blocked r/{subreddit} (403 HTML) — "
-                            f"check cookies or proxy"
+                            f"Reddit blocked r/{subreddit} ({resp.status_code} HTML) — "
+                            f"skipping for 1h"
                         )
                     else:
-                        logger.debug(f"r/{subreddit} returned {resp.status_code}")
+                        logger.debug(f"r/{subreddit} returned {resp.status_code}, skipping 1h")
                     return []
 
                 logger.warning(f"Reddit search returned {resp.status_code}")
