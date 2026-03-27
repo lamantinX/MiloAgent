@@ -1,6 +1,6 @@
 'use strict';
 // ══════════════════════════════════════════════════════════════
-// MiloAgent Mission Control v4.0 — Dashboard Engine
+// MiloAgent Mission Control v5.0 — Dashboard Engine (Cosmic Dark)
 // ══════════════════════════════════════════════════════════════
 
 let TOKEN = localStorage.getItem('milo_token') || '';
@@ -128,7 +128,7 @@ function countUp(el, target, duration) {
 // SPARKLINE SVG
 // ══════════════════════════════════════════════════════════════
 function sparkline(data, w, h, color) {
-  w = w || 80; h = h || 22; color = color || '#00f0ff';
+  w = w || 80; h = h || 22; color = color || '#f9a8d4';
   if (!data || data.length < 2) return '';
   const max = Math.max(...data, 1);
   const pts = data.map((v, i) =>
@@ -161,12 +161,12 @@ function drawGauge(score, grade) {
   const circumference = 2 * Math.PI * r;
   const pct = Math.min(score, 100) / 100;
   const dashOffset = circumference * (1 - pct * 0.75); // 270deg arc
-  const gradeColor = {'A+':'#22ff88','A':'#22ff88','B':'#00f0ff','C':'#eab308','D':'#ff6b35','F':'#ef4444'}[grade] || '#00f0ff';
+  const gradeColor = {'A+':'#10b981','A':'#10b981','B':'#f9a8d4','C':'#f59e0b','D':'#f97316','F':'#ef4444'}[grade] || '#f9a8d4';
   return `<div class="perf-gauge-wrap"><svg width="150" height="150" viewBox="0 0 150 150" class="gauge-svg">
-    <circle cx="75" cy="75" r="${r}" fill="none" stroke="rgba(26,39,68,.5)" stroke-width="${stroke}" stroke-dasharray="${circumference}" stroke-dashoffset="${circumference * 0.25}" transform="rotate(135 75 75)"/>
+    <circle cx="75" cy="75" r="${r}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="${stroke}" stroke-dasharray="${circumference}" stroke-dashoffset="${circumference * 0.25}" transform="rotate(135 75 75)"/>
     <circle cx="75" cy="75" r="${r}" fill="none" stroke="${gradeColor}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${dashOffset}" transform="rotate(135 75 75)" style="transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1);filter:drop-shadow(0 0 6px ${gradeColor})"/>
-    <text x="75" y="68" text-anchor="middle" fill="${gradeColor}" font-family="Orbitron,sans-serif" font-size="32" font-weight="900">${esc(grade)}</text>
-    <text x="75" y="90" text-anchor="middle" fill="#7a8ba8" font-family="JetBrains Mono,monospace" font-size="12">${score}/100</text>
+    <text x="75" y="68" text-anchor="middle" fill="${gradeColor}" font-family="Plus Jakarta Sans,sans-serif" font-size="32" font-weight="900">${esc(grade)}</text>
+    <text x="75" y="90" text-anchor="middle" fill="rgba(255,255,255,.6)" font-family="JetBrains Mono,monospace" font-size="12">${score}/100</text>
   </svg></div>`;
 }
 
@@ -404,38 +404,38 @@ function renderStats(d) {
 
   function sc(cls, val, label, key, color) {
     const trend = trendArrow(key, val);
-    const spark = sparkline(_statHistory[key], 70, 18, color || '#00f0ff');
+    const spark = sparkline(_statHistory[key], 70, 18, color || '#f9a8d4');
     return `<div class="stat-card ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div>${trend}<div class="spark">${spark}</div></div>`;
   }
 
-  let h = sc('green', total, 'Total 24h', 'total', '#22ff88');
-  if (byPlat.reddit!==undefined) h += sc('orange', byPlat.reddit, 'Reddit', 'reddit', '#ff6b35');
-  if (byPlat.telegram!==undefined) h += sc('cyan', byPlat.telegram, 'Telegram', 'telegram', '#00f0ff');
-  if (opps.pending) h += sc('yellow', opps.pending, 'Opportunities', 'opps', '#eab308');
+  let h = sc('green', total, 'Total 24h', 'total', '#10b981');
+  if (byPlat.reddit!==undefined) h += sc('orange', byPlat.reddit, 'Reddit', 'reddit', '#f97316');
+  if (byPlat.telegram!==undefined) h += sc('cyan', byPlat.telegram, 'Telegram', 'telegram', '#f9a8d4');
+  if (opps.pending) h += sc('yellow', opps.pending, 'Opportunities', 'opps', '#f59e0b');
   if (opps.acted) h += sc('blue', opps.acted||0, 'Acted', 'acted', '#3b82f6');
   if (byType.comment) { pushHistory('comments', byType.comment); h += sc('purple', byType.comment, 'Comments', 'comments', '#a855f7'); }
-  if (byType.post||byType.seed_post) { const pv=(byType.post||0)+(byType.seed_post||0); pushHistory('posts', pv); h += sc('orange', pv, 'Posts', 'posts', '#ff6b35'); }
+  if (byType.post||byType.seed_post) { const pv=(byType.post||0)+(byType.seed_post||0); pushHistory('posts', pv); h += sc('orange', pv, 'Posts', 'posts', '#f97316'); }
 
   // Efficiency score
   if (opps.pending || opps.acted) {
     const totalOpps = (opps.pending||0) + (opps.acted||0) + (opps.expired||0) + (opps.rejected||0);
     const efficiency = totalOpps > 0 ? Math.round((opps.acted||0) / totalOpps * 100) : 0;
     pushHistory('efficiency', efficiency);
-    h += sc('cyan', efficiency + '%', 'Efficiency', 'efficiency', '#00f0ff');
+    h += sc('cyan', efficiency + '%', 'Efficiency', 'efficiency', '#f9a8d4');
   }
   row.innerHTML = h;
 
   // Chart (doughnut) with gradient
   const labels = Object.keys(byType);
   const values = Object.values(byType);
-  const chartColors = ['#3b82f6','#22ff88','#a855f7','#eab308','#ef4444','#00f0ff','#ff6b35','#ec4899'];
+  const chartColors = ['#3b82f6','#10b981','#a855f7','#f59e0b','#ef4444','#f9a8d4','#f97316','#ec4899'];
   if (charts.actions) { charts.actions.data.labels=labels; charts.actions.data.datasets[0].data=values; charts.actions.update(); }
   else if (labels.length) {
     charts.actions = new Chart(document.getElementById('chartActions').getContext('2d'), {
       type:'doughnut', data:{labels, datasets:[{data:values,backgroundColor:chartColors,borderWidth:0,hoverOffset:8,borderRadius:2}]},
       options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
         animation:{duration:800,easing:'easeOutQuart'},
-        plugins:{legend:{position:'right',labels:{color:'#7a8ba8',font:{size:11,family:'Exo 2'},padding:8,usePointStyle:true,pointStyleWidth:8}}}}
+        plugins:{legend:{position:'right',labels:{color:'rgba(255,255,255,.6)',font:{size:11,family:'Plus Jakarta Sans'},padding:8,usePointStyle:true,pointStyleWidth:8}}}}
     });
   }
 }
@@ -461,25 +461,25 @@ function renderTimeline(d) {
     const context = ctx.getContext('2d');
     // Gradient for Reddit
     const gradR = context.createLinearGradient(0,0,0,220);
-    gradR.addColorStop(0,'rgba(255,107,53,.2)');
-    gradR.addColorStop(1,'rgba(255,107,53,0)');
+    gradR.addColorStop(0,'rgba(249,115,22,.2)');
+    gradR.addColorStop(1,'rgba(249,115,22,0)');
     // Gradient for Telegram
     const gradT = context.createLinearGradient(0,0,0,220);
-    gradT.addColorStop(0,'rgba(0,240,255,.15)');
-    gradT.addColorStop(1,'rgba(0,240,255,0)');
+    gradT.addColorStop(0,'rgba(249,168,212,.15)');
+    gradT.addColorStop(1,'rgba(249,168,212,0)');
 
     charts.timeline = new Chart(context, {
       type:'line', data:{labels, datasets:[
-        {label:'Reddit',data:reddit,borderColor:'#ff6b35',backgroundColor:gradR,fill:true,tension:.4,pointRadius:0,borderWidth:2},
-        {label:'Telegram',data:telegram,borderColor:'#00f0ff',backgroundColor:gradT,fill:true,tension:.4,pointRadius:0,borderWidth:2}
+        {label:'Reddit',data:reddit,borderColor:'#f97316',backgroundColor:gradR,fill:true,tension:.4,pointRadius:0,borderWidth:2},
+        {label:'Telegram',data:telegram,borderColor:'#f9a8d4',backgroundColor:gradT,fill:true,tension:.4,pointRadius:0,borderWidth:2}
       ]},
       options:{responsive:true,maintainAspectRatio:false,
         animation:{duration:800,easing:'easeOutQuart'},
         interaction:{mode:'index',intersect:false},
-        plugins:{legend:{labels:{color:'#7a8ba8',font:{size:11,family:'Exo 2'},usePointStyle:true,pointStyleWidth:8}},
-          tooltip:{backgroundColor:'rgba(10,15,30,.9)',borderColor:'rgba(0,240,255,.2)',borderWidth:1,titleFont:{family:'Exo 2'},bodyFont:{family:'JetBrains Mono',size:11},padding:10,cornerRadius:8}
+        plugins:{legend:{labels:{color:'rgba(255,255,255,.6)',font:{size:11,family:'Plus Jakarta Sans'},usePointStyle:true,pointStyleWidth:8}},
+          tooltip:{backgroundColor:'rgba(0,0,0,.9)',borderColor:'rgba(249,168,212,.2)',borderWidth:1,titleFont:{family:'Plus Jakarta Sans'},bodyFont:{family:'JetBrains Mono',size:11},padding:10,cornerRadius:8}
         },
-        scales:{x:{ticks:{color:'#4a5b73',font:{size:10,family:'JetBrains Mono'},maxTicksLimit:12},grid:{color:'rgba(26,39,68,.4)'}},y:{ticks:{color:'#4a5b73',font:{family:'JetBrains Mono'}},grid:{color:'rgba(26,39,68,.4)'},beginAtZero:true}}}
+        scales:{x:{ticks:{color:'rgba(255,255,255,.35)',font:{size:10,family:'JetBrains Mono'},maxTicksLimit:12},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'rgba(255,255,255,.35)',font:{family:'JetBrains Mono'}},grid:{color:'rgba(255,255,255,.06)'},beginAtZero:true}}}
     });
   }
 }
@@ -805,8 +805,8 @@ function renderHeatmap(d) {
       const count = cell ? cell.count : 0;
       const intensity = count / maxCount;
       const bg = count === 0 ? 'var(--border)'
-        : `rgba(0,240,255,${Math.max(0.1, intensity * 0.8)})`;
-      const shadow = intensity > 0.5 ? `box-shadow:0 0 ${Math.round(intensity*8)}px rgba(0,240,255,${intensity*0.3})` : '';
+        : `rgba(249,168,212,${Math.max(0.1, intensity * 0.8)})`;
+      const shadow = intensity > 0.5 ? `box-shadow:0 0 ${Math.round(intensity*8)}px rgba(249,168,212,${intensity*0.3})` : '';
       h += `<div class="heatmap-cell" style="background:${bg};${shadow}"><span class="heatmap-tooltip">${days[day]} ${hr}:00 — ${count} actions</span></div>`;
     }
   }
@@ -823,7 +823,7 @@ function renderFunnel(d) {
   const stages = d.stages || [];
   if (!stages.length) { el.innerHTML='<p class="no-data">No funnel data</p>'; return; }
   const maxCount = Math.max(...stages.map(s => s.count), 1);
-  const colors = ['#00f0ff','#a855f7','#ff6b35','#22ff88'];
+  const colors = ['#f9a8d4','#a855f7','#f97316','#10b981'];
   let h = '';
   stages.forEach((stage, i) => {
     const pct = Math.round(stage.count / maxCount * 100);
@@ -944,9 +944,9 @@ function renderServer(d) {
           {label:'RAM %',data:ramData,borderColor:'#a855f7',backgroundColor:gradR,fill:true,tension:.3,pointRadius:0,borderWidth:2}
         ]},
         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-          plugins:{legend:{labels:{color:'#7a8ba8',font:{size:11,family:'Exo 2'},usePointStyle:true}},
-            tooltip:{backgroundColor:'rgba(10,15,30,.9)',borderColor:'rgba(0,240,255,.2)',borderWidth:1,padding:10,cornerRadius:8}
-          },scales:{x:{ticks:{color:'#4a5b73',font:{size:10,family:'JetBrains Mono'},maxTicksLimit:10},grid:{color:'rgba(26,39,68,.4)'}},y:{min:0,max:100,ticks:{color:'#4a5b73'},grid:{color:'rgba(26,39,68,.4)'}}}}
+          plugins:{legend:{labels:{color:'rgba(255,255,255,.6)',font:{size:11,family:'Plus Jakarta Sans'},usePointStyle:true}},
+            tooltip:{backgroundColor:'rgba(0,0,0,.9)',borderColor:'rgba(249,168,212,.2)',borderWidth:1,padding:10,cornerRadius:8}
+          },scales:{x:{ticks:{color:'rgba(255,255,255,.35)',font:{size:10,family:'JetBrains Mono'},maxTicksLimit:10},grid:{color:'rgba(255,255,255,.06)'}},y:{min:0,max:100,ticks:{color:'rgba(255,255,255,.35)'},grid:{color:'rgba(255,255,255,.06)'}}}}
       });
     }
   }
@@ -1019,9 +1019,9 @@ async function renderNetwork(data) {
   // Zoom
   svg.call(d3.zoom().scaleExtent([0.3, 5]).on('zoom', (e) => g.attr('transform', e.transform)));
 
-  const colorMap = {account:'#00f0ff', subreddit:'#ff6b35', relationship:'#a855f7'};
-  const stageColorMap = {noticed:'#4a5b73',engaged:'#eab308',warm:'#ff6b35',friend:'#22ff88',advocate:'#00f0ff'};
-  const nodeColor = (n) => n.type === 'relationship' ? (stageColorMap[n.stage]||'#a855f7') : (colorMap[n.type]||'#7a8ba8');
+  const colorMap = {account:'#f9a8d4', subreddit:'#f97316', relationship:'#a855f7'};
+  const stageColorMap = {noticed:'rgba(255,255,255,.35)',engaged:'#f59e0b',warm:'#f97316',friend:'#10b981',advocate:'#f9a8d4'};
+  const nodeColor = (n) => n.type === 'relationship' ? (stageColorMap[n.stage]||'#a855f7') : (colorMap[n.type]||'rgba(255,255,255,.6)');
   const nodeRadius = (n) => n.type === 'account' ? 10 : n.type === 'subreddit' ? 8 : 6;
 
   const simulation = d3.forceSimulation(nodes)
@@ -1031,7 +1031,7 @@ async function renderNetwork(data) {
     .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4));
 
   const link = g.append('g').selectAll('line').data(links).join('line')
-    .attr('stroke', '#1a2744').attr('stroke-opacity', 0.6)
+    .attr('stroke', 'rgba(255,255,255,.06)').attr('stroke-opacity', 1)
     .attr('stroke-width', d => Math.max(1, Math.min(4, d.value||1)));
 
   const node = g.append('g').selectAll('circle').data(nodes).join('circle')
@@ -1046,7 +1046,7 @@ async function renderNetwork(data) {
 
   const label = g.append('g').selectAll('text').data(nodes).join('text')
     .text(d => d.label)
-    .attr('font-size', 9).attr('fill', '#7a8ba8').attr('font-family', 'JetBrains Mono, monospace')
+    .attr('font-size', 9).attr('fill', 'rgba(255,255,255,.6)').attr('font-family', 'JetBrains Mono, monospace')
     .attr('dx', 14).attr('dy', 4);
 
   // Tooltip
@@ -1356,7 +1356,7 @@ function initParticles() {
           ctx.beginPath();
           ctx.moveTo(particles[i].x, particles[i].y);
           ctx.lineTo(particles[j].x, particles[j].y);
-          ctx.strokeStyle = `rgba(0,240,255,${0.06 * (1 - dist/120)})`;
+          ctx.strokeStyle = `rgba(249,168,212,${0.06 * (1 - dist/120)})`;
           ctx.lineWidth = 0.5;
           ctx.stroke();
         }
@@ -1366,7 +1366,7 @@ function initParticles() {
     particles.forEach(p => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,240,255,0.2)';
+      ctx.fillStyle = 'rgba(249,168,212,0.2)';
       ctx.fill();
       p.x += p.vx; p.y += p.vy;
       if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
@@ -1426,7 +1426,7 @@ function _drawRadar(container, data) {
   svg.call(d3.zoom().scaleExtent([0.3, 4]).on('zoom', (e) => g.attr('transform', e.transform)));
 
   const typeColors = {
-    subreddit: '#00f0ff', theme: '#ff6b35', keyword: '#22ff88',
+    subreddit: '#f9a8d4', theme: '#f97316', keyword: '#10b981',
     news: '#a855f7', talking_point: '#a855f7', discovery: '#fbbf24',
   };
   const typeRadius = (n) => {
@@ -1489,7 +1489,7 @@ function _drawRadar(container, data) {
     .force('collision', d3.forceCollide().radius(d => typeRadius(d)+5));
 
   const link = g.append('g').selectAll('line').data(links).join('line')
-    .attr('stroke', 'rgba(0,240,255,0.15)').attr('stroke-width', d => d.value||1);
+    .attr('stroke', 'rgba(249,168,212,0.15)').attr('stroke-width', d => d.value||1);
 
   const node = g.append('g').selectAll('g').data(nodes).join('g')
     .call(d3.drag().on('start', (e,d) => { if(!e.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
@@ -1533,7 +1533,7 @@ function openRadarSidebar(d) {
   const sidebar = document.getElementById('radarSidebar');
   const content = document.getElementById('radarSidebarContent');
   if (!sidebar || !content) return;
-  const typeColors = { subreddit:'#00f0ff', theme:'#ff6b35', keyword:'#22ff88', news:'#a855f7', talking_point:'#a855f7', discovery:'#fbbf24' };
+  const typeColors = { subreddit:'#f9a8d4', theme:'#f97316', keyword:'#10b981', news:'#a855f7', talking_point:'#a855f7', discovery:'#fbbf24' };
   let h = `<div style="margin-bottom:12px;font-size:11px;color:${typeColors[d.type]||'#888'};text-transform:uppercase;letter-spacing:1px;font-family:var(--font-label)">${d.type}</div>`;
   h += `<h3 style="margin:0 0 12px;color:var(--text);font-family:var(--font-title)">${esc(d.label||'')}</h3>`;
   if (d.description) h += `<p style="color:var(--text2);font-size:12px;margin-bottom:12px">${esc(d.description)}</p>`;
