@@ -1359,6 +1359,28 @@ class WebDashboard:
                     cookie_dict[name.strip()] = value.strip()
             if not cookie_dict:
                 raise HTTPException(status_code=400, detail="No cookies parsed from input")
+            # Verify reddit_session cookie belongs to the right account
+            detected_user = ""
+            if platform == "reddit" and "reddit_session" in cookie_dict:
+                try:
+                    import requests as _req
+                    verify_resp = _req.get(
+                        "https://www.reddit.com/api/me.json",
+                        cookies=cookie_dict,
+                        headers={"User-Agent": target.get("user_agent", "Mozilla/5.0")},
+                        timeout=10,
+                    )
+                    if verify_resp.status_code == 200:
+                        me_data = verify_resp.json().get("data", {})
+                        detected_user = me_data.get("name", "")
+                except Exception:
+                    pass
+                if detected_user and detected_user.lower() != username.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cookie mismatch: these cookies belong to @{detected_user}, not @{username}. Log in to Reddit as @{username} first, then copy document.cookie."
+                    )
+            logger.info(f"Saving {platform} cookies for @{username} (file: {cookies_file})")
             # Save
             os.makedirs(os.path.dirname(cookies_file), exist_ok=True)
             if platform == "twitter":
@@ -1373,12 +1395,15 @@ class WebDashboard:
             important = {"reddit": ["reddit_session"], "twitter": ["auth_token", "ct0", "twid"]}
             found = [k for k in important.get(platform, []) if k in cookie_dict]
             missing = [k for k in important.get(platform, []) if k not in cookie_dict]
+            verified_msg = f" (verified: @{detected_user})" if detected_user else ""
             return {
                 "ok": True,
-                "message": f"Saved {len(cookie_dict)} cookies to {cookies_file}",
+                "message": f"Saved {len(cookie_dict)} cookies for @{username}{verified_msg}",
                 "key_cookies_found": found,
                 "key_cookies_missing": missing,
                 "total": len(cookie_dict),
+                "username": username,
+                "verified_user": detected_user,
             }
 
         # ── DELETE /api/cookies — delete cookies for an account ─
