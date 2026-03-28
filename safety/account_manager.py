@@ -29,10 +29,19 @@ class AccountManager:
     WARNED = "warned"
     BANNED = "banned"
 
-    # Karma thresholds for write operations
-    # Only block accounts with clearly negative karma (downvoted/shadowbanned)
-    # New accounts start at 1 karma and must not be blocked entirely
-    MIN_KARMA_WRITE = -5    # Below this: skip account for write ops (shadowbanned risk)
+    # Karma-based tier system — accounts unlock more capacity as they warm up
+    # Tier 0: new account  (<10 karma)  — 3 write actions/day, comments only
+    # Tier 1: growing      (10-50)      — 7 write actions/day
+    # Tier 2: established  (50-200)     — 12 write actions/day
+    # Tier 3: veteran      (200+)       — 20 write actions/day, top priority
+    KARMA_TIERS = [
+        #  (min_karma, tier_name,    daily_cap, can_post)
+        (200, "veteran",      20, True),
+        ( 50, "established",  12, True),
+        ( 10, "growing",       7, True),
+        (  0, "new",           3, False),   # comment-only for new accounts
+    ]
+    MIN_KARMA_WRITE = -5    # Below this: skip entirely (shadowbanned risk)
     KARMA_CACHE_TTL = 43200  # 12 hours in seconds
 
     def __init__(self, db: Database, config_dir: str = "config/"):
@@ -355,6 +364,37 @@ class AccountManager:
         if karma is None:
             return True  # Unknown karma: don't block
         return karma >= self.MIN_KARMA_WRITE
+
+    def get_account_tier(self, username: str) -> dict:
+        """Return tier info dict for an account based on cached karma.
+
+        Returns dict with keys: tier (int 0-3), name, daily_cap, can_post, karma.
+        Defaults to tier 0 (most conservative) when karma unknown.
+        """
+        karma = self.get_cached_karma(username)
+        if karma is None:
+            # Unknown karma -- use conservative tier 0 defaults but allow actions
+            return {"tier": 0, "name": "new", "daily_cap": 3, "can_post": False, "karma": None}
+        for min_k, tier_name, daily_cap, can_post in self.KARMA_TIERS:
+            if karma >= min_k:
+                tier_num = self.KARMA_TIERS.index((min_k, tier_name, daily_cap, can_post))
+                return {
+                    "tier": len(self.KARMA_TIERS) - 1 - tier_num,
+                    "name": tier_name,
+                    "daily_cap": daily_cap,
+                    "can_post": can_post,
+                    "karma": karma,
+                }
+        # Fallback (shouldn't happen)
+        return {"tier": 0, "name": "new", "daily_cap": 3, "can_post": False, "karma": karma}
+
+    def get_daily_cap(self, username: str) -> int:
+        """Return the write-action daily cap for this account based on karma tier."""
+        return self.get_account_tier(username)["daily_cap"]
+
+    def can_post(self, username: str) -> bool:
+        """Return True if account karma tier allows posting (not just commenting)."""
+        return self.get_account_tier(username)["can_post"]
 
     def mark_cooldown(
         self,

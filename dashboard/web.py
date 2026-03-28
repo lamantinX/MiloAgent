@@ -548,6 +548,9 @@ class WebDashboard:
                         comments = types.get("comment", 0) + types.get("reply", 0)
                         likes = types.get("upvote", 0) + types.get("like", 0)
                         posts = types.get("post", 0) + types.get("tweet", 0) + types.get("seed", 0)
+                        tier_info = {}
+                        if platform == "reddit":
+                            tier_info = self.orch.account_mgr.get_account_tier(username)
                         result.append({
                             "username": username,
                             "platform": platform,
@@ -561,6 +564,11 @@ class WebDashboard:
                             "persona": acc.get("persona", ""),
                             "email": acc.get("email", ""),
                             "enabled": acc.get("enabled", True),
+                            "karma": tier_info.get("karma"),
+                            "tier": tier_info.get("tier", 0),
+                            "tier_name": tier_info.get("name", "new"),
+                            "daily_cap": tier_info.get("daily_cap", 3),
+                            "can_post": tier_info.get("can_post", False),
                         })
             except Exception as e:
                 logger.debug(f"Accounts error: {e}")

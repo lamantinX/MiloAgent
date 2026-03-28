@@ -1016,23 +1016,38 @@ class Orchestrator:
             if platform == "telegram" and "text" not in opp and "title" in opp:
                 opp["text"] = opp["title"]
 
-            # SAFETY: Hard daily cap per account (no more than 15 write actions/day)
+            # SAFETY: Karma-tiered daily cap per account
             # write_only=True excludes upvote/subscribe from the count
+            # Tier 0 (new, karma<10): 3/day | Tier 1 (10-50): 7/day
+            # Tier 2 (50-200): 12/day     | Tier 3 (200+): 20/day
             if platform == "reddit":
+                daily_cap = self.account_mgr.get_daily_cap(account["username"])
                 daily_count = self.db.get_action_count(
                     hours=24, account=account["username"], platform="reddit",
                     write_only=True,
                 )
-                if daily_count >= 15:
+                if daily_count >= daily_cap:
+                    tier = self.account_mgr.get_account_tier(account["username"])
                     logger.info(
-                        f"Daily cap reached for {account['username']}: "
-                        f"{daily_count}/15 write actions today"
+                        f"Daily cap reached for {account['username']} "
+                        f"[{tier['name']}, karma={tier['karma']}]: "
+                        f"{daily_count}/{daily_cap} write actions today"
                     )
                     self.db.log_decision(
                         "daily_cap", platform, proj_name,
                         account["username"], opp["target_id"],
-                        details=f"Daily cap: {daily_count}/15",
+                        details=f"Daily cap: {daily_count}/{daily_cap} tier={tier['name']}",
                         outcome="skipped",
+                    )
+                    continue
+
+            # Tier gate: Tier 0 accounts can't post (only comment)
+            if platform == "reddit" and opp.get("action_type") == "post":
+                if not self.account_mgr.can_post(account["username"]):
+                    tier = self.account_mgr.get_account_tier(account["username"])
+                    logger.debug(
+                        f"Post skipped for {account['username']} [{tier['name']}]: "
+                        f"need karma>=10 to post (current={tier['karma']})"
                     )
                     continue
 
