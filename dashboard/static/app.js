@@ -306,7 +306,7 @@ function esc(s) { if(!s) return ''; const d=document.createElement('div'); d.tex
 function fmtUp(s) { if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; return Math.floor(s/86400)+'d '+Math.floor((s%86400)/3600)+'h'; }
 function fmtCD(s) { if(s<0)return'paused'; if(s<60)return s+'s'; if(s<3600)return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; }
 function resBar(label, pct, warn, crit) {
-  const color = pct>=crit?'var(--red)':pct>=warn?'var(--yellow)':'var(--neon-green)';
+  const color = pct>=crit?'var(--red)':pct>=warn?'var(--yellow)':'var(--green)';
   return `<div class="res-bar"><span class="bar-label">${label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,pct)}%;background:${color}"></div></div><span class="bar-pct" style="color:${color}">${pct}%</span></div>`;
 }
 function hpBar(status) {
@@ -353,11 +353,11 @@ function updateGlobalStatusBar(opts) {
   // CPU + RAM
   if (opts.cpu !== undefined) {
     const el = document.getElementById('gsbCPU');
-    if (el) { el.textContent = opts.cpu + '%'; el.style.color = opts.cpu > 60 ? 'var(--red)' : opts.cpu > 30 ? 'var(--yellow)' : 'var(--neon-green)'; }
+    if (el) { el.textContent = opts.cpu + '%'; el.style.color = opts.cpu > 60 ? 'var(--red)' : opts.cpu > 30 ? 'var(--yellow)' : 'var(--green)'; }
   }
   if (opts.ram !== undefined) {
     const el = document.getElementById('gsbRAM');
-    if (el) { el.textContent = opts.ram + 'MB'; el.style.color = opts.ram > 300 ? 'var(--red)' : opts.ram > 200 ? 'var(--yellow)' : 'var(--neon-green)'; }
+    if (el) { el.textContent = opts.ram + 'MB'; el.style.color = opts.ram > 300 ? 'var(--red)' : opts.ram > 200 ? 'var(--yellow)' : 'var(--green)'; }
   }
   // Spinner (show during refresh)
   const spinner = document.getElementById('gsbSpinner');
@@ -396,7 +396,7 @@ function renderStatus(d) {
   if (orb) orb.className = 'status-orb '+(d.emergency_stopped?'stopped':paused?'paused':'live');
   if (txt) {
     txt.textContent = d.emergency_stopped?'STOPPED':paused?'Paused':'Online';
-    txt.style.color = d.emergency_stopped?'var(--red)':paused?'var(--yellow)':'var(--neon-green)';
+    txt.style.color = d.emergency_stopped?'var(--red)':paused?'var(--yellow)':'var(--green)';
   }
   const mcMode = document.getElementById('mcMode');
   const uptime = document.getElementById('uptime');
@@ -538,9 +538,9 @@ function renderMinimaps(d) {
   else if (rm) {
     const maxAct = Math.max(...reddit.map(s=>s.count_24h||1));
     rm.innerHTML = reddit.map(s => {
-      const stageColor = {new:'var(--text3)',warming:'var(--yellow)',established:'var(--neon-green)',trusted:'var(--neon-cyan)'}[s.stage]||'var(--text3)';
+      const stageColor = {new:'var(--text3)',warming:'var(--yellow)',established:'var(--green)',trusted:'var(--accent)'}[s.stage]||'var(--text3)';
       const pct = Math.round((s.count_24h||0)/maxAct*100);
-      return `<div class="minimap-row"><span class="minimap-name" style="color:var(--neon-orange)">r/${esc(s.subreddit)}</span><div class="minimap-bar"><div class="fill" style="width:${pct}%;background:var(--neon-orange)"></div></div><span class="minimap-count">${s.count_24h}</span><span class="minimap-stage" style="color:${stageColor}">${esc(s.stage)}</span></div>`;
+      return `<div class="minimap-row"><span class="minimap-name" style="color:var(--orange)">r/${esc(s.subreddit)}</span><div class="minimap-bar"><div class="fill" style="width:${pct}%;background:var(--orange)"></div></div><span class="minimap-count">${s.count_24h}</span><span class="minimap-stage" style="color:${stageColor}">${esc(s.stage)}</span></div>`;
     }).join('');
   }
 
@@ -555,7 +555,7 @@ function renderMinimaps(d) {
     tm.innerHTML = tgGroups.map(g => {
       const name = g.name||g.type||g.group||'Unknown';
       const count = g.count||g.messages||0;
-      return `<div class="minimap-row"><span class="minimap-name" style="color:var(--neon-cyan)">${esc(name)}</span><div class="minimap-bar"><div class="fill" style="width:${Math.min(100,count*10)}%;background:var(--neon-cyan)"></div></div><span class="minimap-count">${count}</span></div>`;
+      return `<div class="minimap-row"><span class="minimap-name" style="color:var(--accent)">${esc(name)}</span><div class="minimap-bar"><div class="fill" style="width:${Math.min(100,count*10)}%;background:var(--accent)"></div></div><span class="minimap-count">${count}</span></div>`;
     }).join('');
   }
 }
@@ -575,13 +575,13 @@ function renderRedditAcctPerf(d) {
       a.status==='cooldown' ? `<span class="badge cooldown">CD ${a.cooldown_remaining}s</span>` :
       `<span class="badge error">${esc(a.status)}</span>`;
     const sessionWarning = !a.has_reddit_session ? '<span style="color:var(--red);font-size:10px">NO SESSION</span>' : '';
-    const successColor = a.success_rate>=0.9?'var(--neon-green)':a.success_rate>=0.7?'var(--yellow)':'var(--red)';
+    const successColor = a.success_rate>=0.9?'var(--green)':a.success_rate>=0.7?'var(--yellow)':'var(--red)';
     let subsHtml = '';
     if (a.subreddits_active&&a.subreddits_active.length) {
       subsHtml = '<div class="acct-subs">' + a.subreddits_active.slice(0,8).map(s => `<span>r/${esc(s)}</span>`).join('') +
         (a.subreddits_active.length>8?`<span>+${a.subreddits_active.length-8}</span>`:'') + '</div>';
     }
-    return `<div class="acct-card${sessionClass}"><div class="acct-header"><div><span class="acct-name">@${esc(a.username)}</span> <span class="acct-persona">${esc(a.persona)}</span>${sessionWarning}</div>${statusBadge}</div><div class="acct-stats"><div class="acct-stat"><div class="asv" style="color:var(--neon-green)">${a.total_24h}</div><div class="asl">24h</div></div><div class="acct-stat"><div class="asv" style="color:var(--blue)">${a.comments}</div><div class="asl">Comments</div></div><div class="acct-stat"><div class="asv" style="color:var(--neon-purple)">${a.posts}</div><div class="asl">Posts</div></div><div class="acct-stat"><div class="asv" style="color:${successColor}">${Math.round(a.success_rate*100)}%</div><div class="asl">Success</div></div></div><div class="acct-meta"><span>Upvotes: ${a.upvotes||0}</span><span>Subs: ${a.subscribes||0}</span><span>Active: ${a.subreddits_count} subs</span><span>4h: ${a.total_4h} acts</span>${a.cookie_age_hours!==null?`<span>Cookie: ${a.cookie_age_hours}h</span>`:''}</div>${subsHtml}</div>`;
+    return `<div class="acct-card${sessionClass}"><div class="acct-header"><div><span class="acct-name">@${esc(a.username)}</span> <span class="acct-persona">${esc(a.persona)}</span>${sessionWarning}</div>${statusBadge}</div><div class="acct-stats"><div class="acct-stat"><div class="asv" style="color:var(--green)">${a.total_24h}</div><div class="asl">24h</div></div><div class="acct-stat"><div class="asv" style="color:var(--blue)">${a.comments}</div><div class="asl">Comments</div></div><div class="acct-stat"><div class="asv" style="color:var(--purple)">${a.posts}</div><div class="asl">Posts</div></div><div class="acct-stat"><div class="asv" style="color:${successColor}">${Math.round(a.success_rate*100)}%</div><div class="asl">Success</div></div></div><div class="acct-meta"><span>Upvotes: ${a.upvotes||0}</span><span>Subs: ${a.subscribes||0}</span><span>Active: ${a.subreddits_count} subs</span><span>4h: ${a.total_4h} acts</span>${a.cookie_age_hours!==null?`<span>Cookie: ${a.cookie_age_hours}h</span>`:''}</div>${subsHtml}</div>`;
   }).join('') + '</div>';
 }
 
@@ -643,7 +643,7 @@ function renderActions(d) {
   if (d.error||!d||!d.length) { el.innerHTML='<p class="no-data">No recent actions</p>'; return; }
   el.innerHTML = d.slice(0,50).map(a => {
     const t=a.created_at||a.timestamp||''; const time=t?t.split(' ').pop().substring(0,5):'';
-    const typeColor = {comment:'var(--neon-green)',post:'var(--blue)',seed_post:'var(--neon-purple)',like:'var(--yellow)',reply:'var(--neon-cyan)'}[a.action_type]||'var(--text2)';
+    const typeColor = {comment:'var(--green)',post:'var(--blue)',seed_post:'var(--purple)',like:'var(--yellow)',reply:'var(--accent)'}[a.action_type]||'var(--text2)';
     return `<div class="feed-item"><span class="time">${esc(time)}</span><span class="type" style="color:${typeColor}">${esc(a.action_type||'?')}</span><span class="msg">${esc(a.platform||'')} ${esc(a.subreddit||a.target||'')} ${a.project?'<span style="color:var(--text3)">('+esc(a.project)+')</span>':''}</span></div>`;
   }).join('');
 }
@@ -658,7 +658,7 @@ function renderConversations(d) {
     if (!dms.length) dmEl.innerHTML='<p class="no-data">No conversations yet</p>';
     else dmEl.innerHTML = dms.map(m => {
       const dir = m.direction==='sent'?'▸':'◂';
-      const color = m.direction==='sent'?'var(--neon-green)':'var(--neon-cyan)';
+      const color = m.direction==='sent'?'var(--green)':'var(--accent)';
       const ts = m.timestamp?m.timestamp.split(' ').pop().substring(0,5):'';
       return `<div class="dm-item"><span class="dm-dir" style="color:${color}">${dir}</span><span class="dm-user">${esc(m.username)} <span style="font-size:10px;color:var(--text3)">${esc(m.platform)}</span></span><span class="dm-content">${esc(m.content)}</span><span class="dm-time">${esc(ts)}</span></div>`;
     }).join('');
@@ -684,37 +684,37 @@ function renderBrain(d) {
   const row = (l,v,c) => `<div class="brain-row"><span class="label">${l}</span><span class="value" style="color:${c||'var(--text)'}">${v}</span></div>`;
   const subs = (d.top_subreddits||[]).slice(0,3).map(s => 'r/'+(s.name||s.subreddit||'?')).join(', ');
   if (subs) {
-    h += row('Top Subreddits', subs, 'var(--neon-green)');
+    h += row('Top Subreddits', subs, 'var(--green)');
   } else if (d.subreddit_intel_summary && d.subreddit_intel_summary.length) {
     const intelSubs = d.subreddit_intel_summary.slice(0,3).map(s => 'r/'+s.subreddit+' ('+s.opportunity_score.toFixed(1)+')').join(', ');
-    h += row('Top Intel Targets', intelSubs, 'var(--neon-cyan)');
+    h += row('Top Intel Targets', intelSubs, 'var(--accent)');
   } else {
     h += row('Top Subreddits', '(learning...)', 'var(--text3)');
   }
-  h += row('Promo Ratio', Math.round((d.promo_ratio||0.25)*100)+'% promo', 'var(--neon-cyan)');
+  h += row('Promo Ratio', Math.round((d.promo_ratio||0.25)*100)+'% promo', 'var(--accent)');
   h += row('Best Tone', d.best_tone||'N/A', 'var(--text)');
   const discCount = d.discoveries||0;
   const discDetail = (d.recent_discoveries||[]).slice(0,3).map(x => x.value).join(', ');
   h += row('Discoveries', discCount+' pending'+(discDetail?' — '+discDetail:''), discCount>0?'var(--yellow)':'var(--text3)');
   const pt = (d.post_type_top||[]).map(p => p.type+'('+p.avg_eng+')').join(', ');
-  h += row('Top Posts', pt||'-', 'var(--neon-cyan)');
+  h += row('Top Posts', pt||'-', 'var(--accent)');
   const sent = d.sentiment||{};
   const sIcon = sent.avg>0.1?'▲':sent.avg<-0.1?'▼':'━';
-  const sColor = sent.avg>0.1?'var(--neon-green)':sent.avg<-0.1?'var(--red)':'var(--yellow)';
+  const sColor = sent.avg>0.1?'var(--green)':sent.avg<-0.1?'var(--red)':'var(--yellow)';
   h += row('Sentiment', `${sIcon} ${(sent.avg||0)>0?'+':''}${(sent.avg||0).toFixed(2)} (${sent.total_replies||0} replies)`, sColor);
   const ab = d.ab_tests||[];
-  h += row('A/B Tests', ab.length?ab.map(e=>e.variable+'('+e.a_n+'v'+e.b_n+')').join(' | '):'0 active', ab.length?'var(--neon-purple)':'var(--text3)');
-  h += row('Evolved Prompts', (d.evolved_prompts||0)+' templates', d.evolved_prompts>0?'var(--neon-green)':'var(--text3)');
+  h += row('A/B Tests', ab.length?ab.map(e=>e.variable+'('+e.a_n+'v'+e.b_n+')').join(' | '):'0 active', ab.length?'var(--purple)':'var(--text3)');
+  h += row('Evolved Prompts', (d.evolved_prompts||0)+' templates', d.evolved_prompts>0?'var(--green)':'var(--text3)');
   const llm = d.llm_stats||{};
   if (llm.total_calls!==undefined) {
-    h += row('LLM Calls', `${llm.total_calls} (${llm.total_errors||0} err)`, llm.total_errors>0?'var(--red)':'var(--neon-green)');
-    if (llm.groq_limit) { const pct=Math.round((llm.groq_rpd||0)/llm.groq_limit*100); h += row('Groq RPD', `${llm.groq_rpd||0}/${llm.groq_limit} (${pct}%)`, pct>80?'var(--red)':pct>50?'var(--yellow)':'var(--neon-green)'); }
+    h += row('LLM Calls', `${llm.total_calls} (${llm.total_errors||0} err)`, llm.total_errors>0?'var(--red)':'var(--green)');
+    if (llm.groq_limit) { const pct=Math.round((llm.groq_rpd||0)/llm.groq_limit*100); h += row('Groq RPD', `${llm.groq_rpd||0}/${llm.groq_limit} (${pct}%)`, pct>80?'var(--red)':pct>50?'var(--yellow)':'var(--green)'); }
     if (llm.creative_chain) h += row('Chain', llm.creative_chain, 'var(--text3)');
     const dis = llm.disabled_providers||{};
     if (Object.keys(dis).length) h += row('Disabled', Object.entries(dis).map(([n,s])=>n+'('+Math.round(s/60)+'m)').join(', '), 'var(--red)');
   }
   const rel = d.relationships||{};
-  h += row('Relationships', `${rel.total||0} (${rel.friends||0} friends)`, 'var(--neon-orange)');
+  h += row('Relationships', `${rel.total||0} (${rel.friends||0} friends)`, 'var(--orange)');
   el.innerHTML = h;
 }
 
@@ -732,12 +732,12 @@ function renderPerformance(d) {
   for (const [k,v] of Object.entries(comp)) {
     const m = max[k]||20;
     const pct = Math.round(v/m*100);
-    const color = pct>=80?'var(--neon-green)':pct>=50?'var(--yellow)':'var(--red)';
+    const color = pct>=80?'var(--green)':pct>=50?'var(--yellow)':'var(--red)';
     h += `<div class="perf-bar-label"><span>${k.charAt(0).toUpperCase()+k.slice(1)}</span><span style="color:${color}">${v}/${m}</span></div>`;
     h += `<div class="perf-bar"><div class="fill" style="width:${pct}%;background:${color}"></div></div>`;
   }
   if (d.improvements&&d.improvements.length) h += `<div class="perf-improvements">Suggestions: ${d.improvements.map(i=>esc(i)).join(' | ')}</div>`;
-  else h += `<div style="margin-top:10px;font-size:12px;color:var(--neon-green)">All systems optimal</div>`;
+  else h += `<div style="margin-top:10px;font-size:12px;color:var(--green)">All systems optimal</div>`;
   el.innerHTML = h;
 }
 
@@ -763,7 +763,7 @@ function renderInsights(d) {
     h += '<div style="margin-bottom:12px"><div style="font-family:var(--font-label);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px">Post Types</div>';
     d.post_type_stats.slice(0,5).forEach(p => {
       const e = p.avg_engagement||p.avg_eng||0;
-      h += `<div class="insight-bar"><span style="min-width:90px;font-weight:500">${esc(p.post_type||'?')}</span><div class="bar"><div class="fill" style="width:${Math.min(100,e*10)}%;background:var(--neon-purple)"></div></div><span style="font-family:var(--font-data);font-weight:600">${e.toFixed(1)}</span></div>`;
+      h += `<div class="insight-bar"><span style="min-width:90px;font-weight:500">${esc(p.post_type||'?')}</span><div class="bar"><div class="fill" style="width:${Math.min(100,e*10)}%;background:var(--purple)"></div></div><span style="font-family:var(--font-data);font-weight:600">${e.toFixed(1)}</span></div>`;
     });
     h += '</div>';
   }
@@ -771,7 +771,7 @@ function renderInsights(d) {
     h += '<div style="margin-bottom:12px"><div style="font-family:var(--font-label);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px">Sentiment by Tone</div>';
     d.sentiment.forEach(s => {
       const sc2 = s.avg_sentiment||s.avg_score||0;
-      const c = sc2>0.3?'var(--neon-green)':sc2<-0.3?'var(--red)':'var(--yellow)';
+      const c = sc2>0.3?'var(--green)':sc2<-0.3?'var(--red)':'var(--yellow)';
       h += `<div class="insight-bar"><span style="min-width:70px">${esc(s.tone||'?')}</span><div class="bar"><div class="fill" style="width:${Math.min(100,Math.abs(sc2)*100)}%;background:${c}"></div></div><span style="color:${c};font-family:var(--font-data);font-weight:600">${sc2>0?'+':''}${sc2.toFixed(2)}</span></div>`;
     });
     h += '</div>';
@@ -780,7 +780,7 @@ function renderInsights(d) {
     h += '<div><div style="font-family:var(--font-label);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px">A/B Experiments</div>';
     d.experiments.forEach(e => {
       const aW = e.a_eng>e.b_eng;
-      h += `<div style="font-size:11px;margin:4px 0;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px"><strong>${esc(e.variable||e.name)}</strong>: <span style="color:${aW?'var(--neon-green)':'var(--text3)'}">${esc(e.variant_a)} (${e.a_eng.toFixed(1)}, n=${e.a_n})</span> vs <span style="color:${!aW?'var(--neon-green)':'var(--text3)'}">${esc(e.variant_b)} (${e.b_eng.toFixed(1)}, n=${e.b_n})</span></div>`;
+      h += `<div style="font-size:11px;margin:4px 0;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px"><strong>${esc(e.variable||e.name)}</strong>: <span style="color:${aW?'var(--green)':'var(--text3)'}">${esc(e.variant_a)} (${e.a_eng.toFixed(1)}, n=${e.a_n})</span> vs <span style="color:${!aW?'var(--green)':'var(--text3)'}">${esc(e.variant_b)} (${e.b_eng.toFixed(1)}, n=${e.b_n})</span></div>`;
     });
     h += '</div>';
   }
@@ -801,8 +801,8 @@ function renderOpps(d) {
   if (!d.length) { el.innerHTML='<p class="no-data">No pending opportunities</p>'; return; }
   el.innerHTML = d.slice(0,25).map(o => {
     const sc = o.score||o.relevance_score||0;
-    const c = sc>=7?'var(--neon-green)':sc>=4?'var(--yellow)':'var(--text3)';
-    return `<div class="feed-item"><span style="color:${c};font-family:var(--font-data);font-weight:700;min-width:32px;font-size:13px">${sc.toFixed(1)}</span><span class="type" style="color:var(--neon-orange)">${esc(o.platform||'')}</span><span class="msg">${esc(o.subreddit_or_query||o.subreddit||'')} — ${esc((o.title||o.content||'').substring(0,80))}</span></div>`;
+    const c = sc>=7?'var(--green)':sc>=4?'var(--yellow)':'var(--text3)';
+    return `<div class="feed-item"><span style="color:${c};font-family:var(--font-data);font-weight:700;min-width:32px;font-size:13px">${sc.toFixed(1)}</span><span class="type" style="color:var(--orange)">${esc(o.platform||'')}</span><span class="msg">${esc(o.subreddit_or_query||o.subreddit||'')} — ${esc((o.title||o.content||'').substring(0,80))}</span></div>`;
   }).join('');
 }
 
@@ -879,7 +879,7 @@ function renderFunnel(d) {
     </div>`;
   });
   if (d.conversion_rate !== undefined) {
-    h += `<div style="text-align:center;margin-top:8px;font-family:var(--font-data);font-size:12px;color:var(--text3)">End-to-end: <span style="color:var(--neon-cyan);font-weight:700">${(d.conversion_rate*100).toFixed(1)}%</span></div>`;
+    h += `<div style="text-align:center;margin-top:8px;font-family:var(--font-data);font-size:12px;color:var(--text3)">End-to-end: <span style="color:var(--accent);font-weight:700">${(d.conversion_rate*100).toFixed(1)}%</span></div>`;
   }
   el.innerHTML = h;
 }
@@ -911,9 +911,34 @@ function renderCommunities(comms) {
     <div class="stat-card yellow"><div class="sv">${comms.length-setup}</div><div class="sl">Pending</div></div>`;
 
   if(el) el.innerHTML = comms.map(c => {
+    const sub = c.subreddit||c.name||'';
     const setupPct = c.setup_complete ? 100 : Math.round(((c.rules_count>0?25:0) + (c.flair_count>0?25:0) + (c.automod_configured?25:0) + (c.sticky_post_1?25:0)));
-    const typeColor = c.ownership_type==='created'?'var(--neon-green)':c.ownership_type==='claimed'?'var(--neon-cyan)':'var(--text3)';
-    return `<div class="community-card"><div class="comm-header"><span class="comm-name">r/${esc(c.subreddit||c.name)}</span><div style="display:flex;gap:8px;align-items:center"><span class="badge ${c.setup_complete?'on':'warning'}">${c.setup_complete?'Ready':'Setup '+setupPct+'%'}</span><span style="font-size:10px;color:${typeColor};text-transform:uppercase;font-family:var(--font-data)">${esc(c.ownership_type||'pending')}</span></div></div><div class="comm-stats"><span style="color:var(--text3)">${esc(c.project||'')}</span><span>Rules: ${c.rules_count||0}</span><span>Flairs: ${c.flair_count||0}</span><span>Posts: ${c.total_posts||0}</span><span>Subs: ${c.subscribers||'?'}</span></div><div class="comm-setup-bar"><div class="fill" style="width:${setupPct}%"></div></div></div>`;
+    const typeColor = c.ownership_type==='created'?'var(--green)':c.ownership_type==='claimed'?'var(--accent)':'var(--text3)';
+    // Setup checklist
+    const checks = [
+      {label:'Rules', ok: (c.rules_count||0)>0},
+      {label:'Flairs', ok: (c.flair_count||0)>0},
+      {label:'AutoMod', ok: !!c.automod_configured},
+      {label:'Sticky', ok: !!c.sticky_post_1},
+    ];
+    const checkHtml = checks.map(ck => `<span style="color:${ck.ok?'var(--green)':'var(--text3)'}; font-size:10px">${ck.ok?'&#10003;':'&#10007;'} ${ck.label}</span>`).join(' ');
+    return `<div class="community-card">
+      <div class="comm-header">
+        <a href="https://www.reddit.com/r/${esc(sub)}" target="_blank" rel="noopener" class="comm-name" style="text-decoration:none">r/${esc(sub)} &#8599;</a>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge ${c.setup_complete?'on':'warning'}">${c.setup_complete?'Ready':'Setup '+setupPct+'%'}</span>
+          <span style="font-size:10px;color:${typeColor};font-family:var(--font-data)">${esc(c.ownership_type||'pending')}</span>
+        </div>
+      </div>
+      <div class="comm-stats">
+        <span style="color:var(--accent)">${esc(c.project||'')}</span>
+        <span>Posts: ${c.total_posts||0}</span>
+        <span>Subs: ${c.subscribers||'?'}</span>
+        <span>Account: ${esc(c.account||'?')}</span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">${checkHtml}</div>
+      <div class="comm-setup-bar"><div class="fill" style="width:${setupPct}%"></div></div>
+    </div>`;
   }).join('');
 }
 
@@ -923,8 +948,13 @@ function renderTakeoverTargets(d) {
   if (!d||!d.length) { el.innerHTML=emptyState('&#128269;','No takeover targets','Milo scans for dormant subreddits to take over every 24h. Targets appear when matching subs are found.'); return; }
   el.innerHTML = d.map(t => {
     const sc = t.takeover_score||t.score||0;
-    const c = sc>=8?'var(--neon-green)':sc>=6?'var(--yellow)':'var(--text3)';
-    return `<div class="feed-item"><span style="color:${c};font-family:var(--font-data);font-weight:700;min-width:28px">${sc.toFixed(1)}</span><span class="type" style="color:var(--neon-orange)">r/${esc(t.subreddit)}</span><span class="msg">${esc(t.project||'')} — ${esc(t.status||'pending')}</span></div>`;
+    const c = sc>=8?'var(--green)':sc>=6?'var(--yellow)':'var(--text3)';
+    const sub = t.subreddit||'';
+    return `<div class="feed-item">
+      <span style="color:${c};font-family:var(--font-data);font-weight:700;min-width:28px">${sc.toFixed(1)}</span>
+      <a href="https://www.reddit.com/r/${esc(sub)}" target="_blank" rel="noopener" class="type" style="color:var(--accent);text-decoration:none">r/${esc(sub)} &#8599;</a>
+      <span class="msg">${esc(t.project||'')} -- ${esc(t.status||'pending')}</span>
+    </div>`;
   }).join('');
 }
 
@@ -933,8 +963,13 @@ function renderTakeoverRequests(d) {
   if (!el) return;
   if (!d||!d.length) { el.innerHTML=emptyState('&#128230;','No takeover requests','Requests are submitted automatically when Milo finds dormant subs that match your projects.'); return; }
   el.innerHTML = d.map(r => {
-    const statusColor = {pending:'var(--yellow)',approved:'var(--neon-green)',denied:'var(--red)'}[r.status]||'var(--text3)';
-    return `<div class="feed-item"><span class="type" style="color:var(--neon-orange)">r/${esc(r.subreddit)}</span><span class="msg">${esc(r.project)} — ${esc(r.account)}</span><span style="color:${statusColor};font-weight:600;min-width:60px;text-align:right">${esc(r.status)}</span></div>`;
+    const statusColor = {pending:'var(--yellow)',approved:'var(--green)',denied:'var(--red)'}[r.status]||'var(--text3)';
+    const sub = r.subreddit||'';
+    return `<div class="feed-item">
+      <a href="https://www.reddit.com/r/${esc(sub)}" target="_blank" rel="noopener" class="type" style="color:var(--accent);text-decoration:none">r/${esc(sub)} &#8599;</a>
+      <span class="msg">${esc(r.project)} -- ${esc(r.account)}</span>
+      <span style="color:${statusColor};font-weight:600;min-width:60px;text-align:right">${esc(r.status)}</span>
+    </div>`;
   }).join('');
 }
 
@@ -947,8 +982,8 @@ function renderServer(d) {
 
   const mrCPU = document.getElementById('mrCPU');
   const mrRAM = document.getElementById('mrRAM');
-  if(mrCPU) { mrCPU.textContent = (cpu.usage_pct||0)+'%'; mrCPU.style.color = cpu.usage_pct>60?'var(--red)':cpu.usage_pct>30?'var(--yellow)':'var(--neon-green)'; }
-  if(mrRAM) { mrRAM.textContent = (proc.rss_mb||0)+'MB'; mrRAM.style.color = proc.rss_mb>300?'var(--red)':proc.rss_mb>200?'var(--yellow)':'var(--neon-green)'; }
+  if(mrCPU) { mrCPU.textContent = (cpu.usage_pct||0)+'%'; mrCPU.style.color = cpu.usage_pct>60?'var(--red)':cpu.usage_pct>30?'var(--yellow)':'var(--green)'; }
+  if(mrRAM) { mrRAM.textContent = (proc.rss_mb||0)+'MB'; mrRAM.style.color = proc.rss_mb>300?'var(--red)':proc.rss_mb>200?'var(--yellow)':'var(--green)'; }
   // Update global status bar + tab badges
   updateGlobalStatusBar({ cpu: cpu.usage_pct||0, ram: proc.rss_mb||0 });
   updateTabBadges({ cpu: cpu.usage_pct||0 });
@@ -1121,7 +1156,7 @@ function filterNetwork(type) {
   document.querySelectorAll('.network-controls .btn').forEach(b => b.classList.remove('active'));
   event.target.classList.add('active');
   // For now, just re-trigger refresh for the network tab
-  if (currentTab === 'network') refresh();
+  if (currentTab === 'intel') refresh();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1582,14 +1617,14 @@ function openRadarSidebar(d) {
   if (d.description) h += `<p style="color:var(--text2);font-size:12px;margin-bottom:12px">${esc(d.description)}</p>`;
   if (d.content) h += `<p style="color:var(--text2);font-size:12px;margin-bottom:12px">${esc(d.content)}</p>`;
   const stat = (l,v,c) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text3);font-size:11px">${l}</span><span style="color:${c||'var(--text)'};font-family:var(--font-data);font-size:12px;font-weight:600">${v}</span></div>`;
-  if (d.score !== undefined) h += stat('Score', d.score, d.score>=7?'var(--neon-green)':d.score>=4?'var(--yellow)':'var(--text)');
-  if (d.subscribers) h += stat('Subscribers', d.subscribers.toLocaleString(), 'var(--neon-cyan)');
-  if (d.active_users) h += stat('Active Users', d.active_users.toLocaleString(), 'var(--neon-green)');
+  if (d.score !== undefined) h += stat('Score', d.score, d.score>=7?'var(--green)':d.score>=4?'var(--yellow)':'var(--text)');
+  if (d.subscribers) h += stat('Subscribers', d.subscribers.toLocaleString(), 'var(--accent)');
+  if (d.active_users) h += stat('Active Users', d.active_users.toLocaleString(), 'var(--green)');
   if (d.posts_per_day) h += stat('Posts/Day', d.posts_per_day, 'var(--text)');
-  if (d.frequency) h += stat('Frequency', d.frequency+' subs', 'var(--neon-orange)');
-  if (d.subreddits) h += stat('Found In', d.subreddits.map(s=>'r/'+s).join(', '), 'var(--neon-cyan)');
-  if (d.weight) h += stat('Weight', d.weight, 'var(--neon-green)');
-  if (d.engagement) h += stat('Avg Engagement', d.engagement, 'var(--neon-cyan)');
+  if (d.frequency) h += stat('Frequency', d.frequency+' subs', 'var(--orange)');
+  if (d.subreddits) h += stat('Found In', d.subreddits.map(s=>'r/'+s).join(', '), 'var(--accent)');
+  if (d.weight) h += stat('Weight', d.weight, 'var(--green)');
+  if (d.engagement) h += stat('Avg Engagement', d.engagement, 'var(--accent)');
   if (d.samples) h += stat('Samples', d.samples, 'var(--text3)');
   if (d.discovery_type) h += stat('Type', d.discovery_type, 'var(--yellow)');
   if (d.source) h += stat('Source', d.source, 'var(--text3)');
@@ -1630,7 +1665,7 @@ function renderTrendingFeed(data) {
     const ago = _timeAgo(t.timestamp);
     return `<div class="trending-item">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-weight:600;color:var(--neon-cyan);font-family:var(--font-data)">r/${esc(t.subreddit)}</span>
+        <span style="font-weight:600;color:var(--accent);font-family:var(--font-data)">r/${esc(t.subreddit)}</span>
         <span style="font-size:10px;color:var(--text3)">${ago} ${hot}</span>
       </div>
       <div style="margin-bottom:4px">${themes}</div>
@@ -1667,7 +1702,7 @@ function _renderKnowledgeFiltered() {
   let items = _knowledgeData;
   if (_knowledgeFilter !== 'all') items = items.filter(e => e.category === _knowledgeFilter);
   if (!items.length) { el.innerHTML=`<p class="no-data">No ${_knowledgeFilter==='all'?'':_knowledgeFilter+' '}entries yet</p>`; return; }
-  const catColors = { trend:'var(--neon-cyan)', news:'var(--neon-purple)', talking_point:'var(--neon-orange)', strategy_rule:'var(--neon-green)' };
+  const catColors = { trend:'var(--accent)', news:'var(--purple)', talking_point:'var(--orange)', strategy_rule:'var(--green)' };
   el.innerHTML = items.slice(0, 40).map(e => {
     const ago = _timeAgo(e.timestamp);
     const rel = Math.round((e.relevance_score||0)*100);
@@ -1698,9 +1733,9 @@ function renderDiscoveriesList(data) {
   if (countEl) countEl.textContent = items.length;
   if (!items.length) { el.innerHTML=emptyState('&#128161;','No discoveries yet','AI discovers new subreddits, keywords, and growth opportunities every 6h as it analyzes content.'); return; }
   el.innerHTML = items.map(d => {
-    const statusColors = { candidate:'var(--yellow)', approved:'var(--neon-green)', rejected:'var(--red)' };
+    const statusColors = { candidate:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)' };
     const sc = (d.score||0).toFixed(1);
-    const scColor = d.score>=7?'var(--neon-green)':d.score>=4?'var(--yellow)':'var(--text3)';
+    const scColor = d.score>=7?'var(--green)':d.score>=4?'var(--yellow)':'var(--text3)';
     return `<div class="discovery-item">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="color:${scColor};font-family:var(--font-data);font-weight:700;min-width:28px">${sc}</span>
@@ -1730,7 +1765,7 @@ function renderFailurePatterns(data) {
         <span style="font-size:10px;color:var(--text3)">r/${esc(f.subreddit)} | x${f.frequency||1}</span>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">${esc(f.pattern)}</div>
-      ${f.avoidance_rule?`<blockquote style="margin:0;padding:6px 10px;border-left:2px solid var(--neon-green);font-size:11px;color:var(--neon-green);font-style:italic">${esc(f.avoidance_rule)}</blockquote>`:''}
+      ${f.avoidance_rule?`<blockquote style="margin:0;padding:6px 10px;border-left:2px solid var(--green);font-size:11px;color:var(--green);font-style:italic">${esc(f.avoidance_rule)}</blockquote>`:''}
     </div>`;
   }).join('');
 }
@@ -1751,7 +1786,7 @@ function renderSentimentMap(data) {
     bySub.forEach(s => {
       const avg = s.avg_sentiment||0;
       const pct = Math.round(Math.abs(avg)*100);
-      const color = avg > 0.1 ? 'var(--neon-green)' : avg < -0.1 ? 'var(--red)' : 'var(--yellow)';
+      const color = avg > 0.1 ? 'var(--green)' : avg < -0.1 ? 'var(--red)' : 'var(--yellow)';
       const barW = Math.round((s.total_replies||0)/maxReplies*100);
       h += `<div class="sentiment-row">
         <span style="min-width:100px;font-family:var(--font-data);font-size:11px">r/${esc(s.subreddit)}</span>
@@ -1767,7 +1802,7 @@ function renderSentimentMap(data) {
     h += '<div style="font-family:var(--font-label);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;margin:12px 0 8px">By Tone</div>';
     byTone.forEach(t => {
       const avg = t.avg_sentiment||0;
-      const color = avg > 0.1 ? 'var(--neon-green)' : avg < -0.1 ? 'var(--red)' : 'var(--yellow)';
+      const color = avg > 0.1 ? 'var(--green)' : avg < -0.1 ? 'var(--red)' : 'var(--yellow)';
       h += `<div class="sentiment-row">
         <span style="min-width:100px;font-family:var(--font-data);font-size:11px">${esc(t.tone_style)}</span>
         <span style="color:${color};font-family:var(--font-data);font-size:12px;font-weight:600">${avg>0?'+':''}${avg.toFixed(2)}</span>

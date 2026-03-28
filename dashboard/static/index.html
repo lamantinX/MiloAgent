@@ -322,6 +322,13 @@
   <!-- ═══════ TAB 4: COMMUNITIES ═══════ -->
   <div id="tab-communities" class="tab-content">
     <div class="stat-grid" id="commStats"></div>
+    <!-- Manual Actions -->
+    <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn primary" onclick="doControl('manage-communities')">Run Community Manager</button>
+      <button class="btn" onclick="doControl('animate-hubs')">Animate Hubs</button>
+      <button class="btn" onclick="doControl('scan-takeover')">Scan Takeover Targets</button>
+      <button class="btn" onclick="doControl('research')">Run Research</button>
+    </div>
     <div class="grid">
       <div class="card full glow-purple">
         <h2>Managed Communities <span class="badge-count" id="commCount">0</span></h2>

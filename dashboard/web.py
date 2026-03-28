@@ -1292,6 +1292,42 @@ class WebDashboard:
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
+        @app.post("/api/control/manage-communities")
+        async def control_manage_communities(_=Depends(self._verify_token)):
+            try:
+                import threading
+                threading.Thread(target=self.orch._manage_communities_safe, daemon=True).start()
+                return {"ok": True, "message": "Community manager triggered"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        @app.post("/api/control/animate-hubs")
+        async def control_animate_hubs(_=Depends(self._verify_token)):
+            try:
+                import threading
+                threading.Thread(target=self.orch._animate_hubs_safe, daemon=True).start()
+                return {"ok": True, "message": "Hub animation triggered"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        @app.post("/api/control/scan-takeover")
+        async def control_scan_takeover(_=Depends(self._verify_token)):
+            try:
+                import threading
+                threading.Thread(target=self.orch._scan_takeover_targets_safe, daemon=True).start()
+                return {"ok": True, "message": "Takeover scan triggered"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        @app.post("/api/control/research")
+        async def control_research(_=Depends(self._verify_token)):
+            try:
+                import threading
+                threading.Thread(target=self.orch._research_safe, daemon=True).start()
+                return {"ok": True, "message": "Research cycle triggered"}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
         # ── GET /api/cookies — cookie status for all accounts ─
         @app.get("/api/cookies")
         async def get_cookies_status(_=Depends(self._verify_token)):
