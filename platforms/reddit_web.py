@@ -18,6 +18,7 @@ import requests
 from platforms.base_platform import BasePlatform
 from core.database import Database
 from core.content_gen import ContentGenerator
+from safety.captcha_solver import RedditCaptchaSolver
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +26,35 @@ logger = logging.getLogger(__name__)
 REDDIT_BASE = "https://www.reddit.com"
 REDDIT_OLD = "https://old.reddit.com"
 
-# Rotate User-Agents to avoid detection
+# Rotate User-Agents to avoid detection (updated 2025)
 USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    # Chrome on Windows (most common)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    # Chrome on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
+    # Firefox on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.2; rv:132.0) Gecko/20100101 Firefox/132.0",
+    # Safari on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    # Chrome on Linux
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
+
+# Accept-Language variants to rotate (avoid same fingerprint every request)
+_ACCEPT_LANGUAGES = [
+    "en-US,en;q=0.9",
+    "en-GB,en;q=0.9",
+    "en-US,en;q=0.9,fr;q=0.8",
+    "en-US,en;q=0.8",
+    "en-CA,en;q=0.9",
 ]
 
 
@@ -65,13 +88,24 @@ class RedditWebBot(BasePlatform):
 
         # Session for authenticated requests (with connection pooling)
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": _random_ua()})
+        _ua = _random_ua()
+        self.session.headers.update({
+            "User-Agent": _ua,
+            "Accept-Language": random.choice(_ACCEPT_LANGUAGES),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Upgrade-Insecure-Requests": "1",
+        })
         from requests.adapters import HTTPAdapter
         _adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
         self.session.mount("https://", _adapter)
         self.session.mount("http://", _adapter)
         self._authenticated = False
         self._modhash = ""
+
+        # CAPTCHA auto-solver (ddddocr -> tesseract -> give up)
+        self._captcha_solver = RedditCaptchaSolver(self.session)
 
         # Circuit breaker: stop trying after repeated failures
         self._consecutive_failures = 0
@@ -690,9 +724,34 @@ class RedditWebBot(BasePlatform):
                     e[0] == "BAD_CAPTCHA" for e in errors if isinstance(e, list) and e
                 )
                 if is_captcha:
-                    logger.warning(
-                        f"CAPTCHA required for {self._username} — cooldown 2h"
-                    )
+                    captcha_iden = result.get("json", {}).get("data", {}).get("captcha", "")
+                    if captcha_iden:
+                        solution = self._captcha_solver.solve(captcha_iden)
+                        if solution:
+                            logger.info(f"CAPTCHA solved for {self._username}, retrying comment...")
+                            post_data["captcha_iden"] = captcha_iden
+                            post_data["captcha_sol"] = solution
+                            retry_resp = self.session.post(
+                                f"{REDDIT_OLD}/api/comment",
+                                data=post_data,
+                                headers=post_headers,
+                                timeout=30,
+                            )
+                            try:
+                                retry_result = retry_resp.json()
+                                retry_errors = retry_result.get("json", {}).get("errors", [])
+                                if not retry_errors:
+                                    logger.info(f"Comment posted after CAPTCHA solve for {self._username}")
+                                    self._consecutive_failures = 0
+                                    return True
+                            except Exception:
+                                pass
+                            logger.warning(f"CAPTCHA retry failed for {self._username}")
+                    # Cross-account cooling: record CAPTCHA hit so other accounts avoid this sub
+                    subreddit_name = opportunity.get("subreddit", opportunity.get("subreddit_or_query", ""))
+                    if subreddit_name:
+                        self.db.log_captcha_hit(subreddit_name, self._username)
+                    logger.warning(f"CAPTCHA required for {self._username} — cooldown 2h")
                     self._ratelimit_until = time.time() + 120 * 60
                     return False
                 logger.error(f"Reddit comment error: {error_msg}")
@@ -990,6 +1049,32 @@ class RedditWebBot(BasePlatform):
                     self._ratelimit_until = time.time() + wait * 60
                     return None
                 if "BAD_CAPTCHA" in error_codes:
+                    captcha_iden = result.get("json", {}).get("data", {}).get("captcha", "")
+                    if captcha_iden:
+                        solution = self._captcha_solver.solve(captcha_iden)
+                        if solution:
+                            logger.info(f"CAPTCHA solved for {self._username}, retrying post...")
+                            post_data_retry = {
+                                "sr": subreddit, "kind": "self", "title": title,
+                                "text": body, "uh": self._modhash, "api_type": "json",
+                                "resubmit": "true",
+                                "captcha_iden": captcha_iden, "captcha_sol": solution,
+                            }
+                            retry_resp = self.session.post(
+                                f"{REDDIT_OLD}/api/submit", data=post_data_retry,
+                                headers={"User-Agent": self.session.headers.get("User-Agent", _random_ua()),
+                                         "Referer": f"{REDDIT_OLD}/r/{subreddit}/submit", "Origin": REDDIT_OLD},
+                                timeout=30,
+                            )
+                            try:
+                                retry_result = retry_resp.json()
+                                retry_errors = retry_result.get("json", {}).get("errors", [])
+                                if not retry_errors:
+                                    post_url = retry_result.get("json", {}).get("data", {}).get("url", "")
+                                    logger.info(f"Post created after CAPTCHA solve in r/{subreddit}")
+                                    return post_url or f"{REDDIT_OLD}/r/{subreddit}"
+                            except Exception:
+                                pass
                     logger.warning(f"CAPTCHA required for {self._username} — cooldown 2h")
                     self._ratelimit_until = time.time() + 120 * 60
                     return None

@@ -505,6 +505,12 @@ class Orchestrator:
             "interval", hours=6, id="opportunity_purge",
             next_run_time=datetime.utcnow() + timedelta(minutes=30),
         )
+        # Karma refresh every 12h -- populates karma gate cache in AccountManager
+        self.scheduler.add_job(
+            self._refresh_karma_safe, "interval",
+            hours=12, id="karma_refresh",
+            next_run_time=datetime.utcnow() + timedelta(minutes=7),
+        )
 
         # Daily report
         notifications = {}
@@ -1051,6 +1057,18 @@ class Orchestrator:
                     details="Target already acted on", outcome="skipped",
                 )
                 continue
+
+            # Cross-account CAPTCHA cooling: skip subreddits where CAPTCHA was recently hit
+            if platform == "reddit":
+                sub_name = opp.get("subreddit_or_query", "") or opp.get("subreddit", "")
+                if sub_name and self.db.is_subreddit_captcha_hot(sub_name, minutes=30):
+                    logger.debug(f"Subreddit r/{sub_name} CAPTCHA-hot (30min cooldown), skipping")
+                    self.db.log_decision(
+                        "captcha_hot_skip", platform, proj_name,
+                        account["username"], opp["target_id"],
+                        details=f"r/{sub_name} CAPTCHA-hot", outcome="skipped",
+                    )
+                    continue
 
             # Thread-awareness: skip if any account already commented
             if self.dedup.was_thread_recently_hit(opp["target_id"], hours=6):
@@ -2296,6 +2314,41 @@ class Orchestrator:
 
         if shared:
             logger.info(f"Cross-platform sharing: {shared} Reddit posts shared to Twitter")
+
+    def _refresh_karma_safe(self):
+        """Refresh karma for all Reddit accounts and populate the karma gate cache."""
+        if self._paused:
+            return
+        if not self._check_resources():
+            return
+        try:
+            accounts = self.account_mgr.load_accounts("reddit")
+            refreshed = 0
+            for acc in accounts:
+                username = acc.get("username", "")
+                if not username:
+                    continue
+                try:
+                    bot = self._get_reddit_bot(acc)
+                    if not bot._ensure_auth():
+                        continue
+                    info = bot.get_user_info()
+                    if info:
+                        total_karma = (info.get("comment_karma", 0) or 0) + (info.get("link_karma", 0) or 0)
+                        self.account_mgr.update_karma_cache(username, total_karma)
+                        refreshed += 1
+                        if total_karma < self.account_mgr.MIN_KARMA_WRITE:
+                            logger.warning(
+                                f"Low karma account: {username} karma={total_karma} "
+                                f"(threshold={self.account_mgr.MIN_KARMA_WRITE}) -- will skip write ops"
+                            )
+                        time.sleep(random.uniform(2, 5))
+                except Exception as e:
+                    logger.debug(f"Karma refresh failed for {username}: {e}")
+            if refreshed:
+                logger.info(f"Karma refreshed for {refreshed}/{len(accounts)} Reddit accounts")
+        except Exception as e:
+            logger.error(f"Karma refresh error: {e}")
 
     def _db_maintenance(self):
         """Periodic DB maintenance: WAL checkpoint, ANALYZE, prune old data."""

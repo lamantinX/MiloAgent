@@ -29,6 +29,10 @@ class AccountManager:
     WARNED = "warned"
     BANNED = "banned"
 
+    # Karma thresholds for write operations
+    MIN_KARMA_WRITE = 10    # Below this: skip account for comments/posts
+    KARMA_CACHE_TTL = 43200  # 12 hours in seconds
+
     def __init__(self, db: Database, config_dir: str = "config/"):
         self.db = db
         self.config_dir = config_dir
@@ -37,6 +41,8 @@ class AccountManager:
         self._statuses: Dict[str, str] = {}
         self._last_used: Dict[str, str] = {}  # platform -> last used username
         self._rotation_index: Dict[str, int] = {}  # platform -> index for true round-robin
+        # Karma cache: username -> (total_karma, fetched_at_timestamp)
+        self._karma_cache: Dict[str, tuple] = {}
         # Hot-reload support
         self._file_mtimes: Dict[str, float] = {}
         self._on_reload_callbacks: List[Callable] = []
@@ -255,6 +261,17 @@ class AccountManager:
                     available = project_accounts
                 # else fall back to all available accounts
 
+            # Karma gate: for write operations, prefer accounts with sufficient karma
+            # (Reddit CAPTCHAs low-karma accounts aggressively for write ops)
+            if platform == "reddit":
+                total_before = len(available)
+                karma_ok = [a for a in available if self.is_karma_sufficient(a["username"])]
+                if karma_ok:
+                    available = karma_ok
+                    if len(karma_ok) < total_before:
+                        logger.debug(f"Karma gate: {len(karma_ok)}/{total_before} accounts passed (karma>={self.MIN_KARMA_WRITE})")
+                # else: all unknown karma, proceed (don't block if cache empty)
+
             # True round-robin: rotate through ALL available accounts fairly
             # Step 1: advance the rotation index
             idx = self._rotation_index.get(platform, -1) + 1
@@ -313,6 +330,29 @@ class AccountManager:
                     return None
                 return acc
         return None
+
+    def update_karma_cache(self, username: str, karma: int):
+        """Store fresh karma value for an account."""
+        self._karma_cache[username] = (karma, time.time())
+        logger.debug(f"Karma cache updated: {username} = {karma}")
+
+    def get_cached_karma(self, username: str) -> Optional[int]:
+        """Return cached karma if fresh (< 12h), else None."""
+        entry = self._karma_cache.get(username)
+        if entry and (time.time() - entry[1]) < self.KARMA_CACHE_TTL:
+            return entry[0]
+        return None
+
+    def is_karma_sufficient(self, username: str) -> bool:
+        """Check if account has enough karma for write operations.
+
+        Returns True if karma is sufficient OR if karma is unknown (cache miss).
+        Unknown karma = don't block, let the action proceed and learn from result.
+        """
+        karma = self.get_cached_karma(username)
+        if karma is None:
+            return True  # Unknown karma: don't block
+        return karma >= self.MIN_KARMA_WRITE
 
     def mark_cooldown(
         self,

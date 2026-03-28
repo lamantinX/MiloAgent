@@ -792,6 +792,34 @@ class Database:
             (decision_type, platform, project, account, target_id, details, outcome),
         )
 
+    def log_captcha_hit(self, subreddit: str, account: str):
+        """Record a CAPTCHA hit in a subreddit (cross-account cooling signal).
+
+        When account A hits CAPTCHA in r/X, all accounts will avoid r/X for
+        CAPTCHA_SUB_COOLDOWN_MINUTES via is_subreddit_captcha_hot().
+        """
+        self.log_decision(
+            "captcha_hit", "reddit", "", account, subreddit,
+            details=f"CAPTCHA triggered in r/{subreddit}",
+            outcome="cooldown",
+        )
+
+    def is_subreddit_captcha_hot(self, subreddit: str, minutes: int = 30) -> bool:
+        """Return True if any account got CAPTCHA in this sub within last N minutes.
+
+        Used as cross-account CAPTCHA cooling: if sub X burned account A,
+        other accounts avoid it too for a while.
+        """
+        since = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM decision_log
+               WHERE decision_type = 'captcha_hit'
+               AND target_id = ?
+               AND timestamp > ?""",
+            (subreddit, since),
+        ).fetchone()
+        return (row[0] if row else 0) > 0
+
     def get_recent_decisions(
         self, hours: int = 2, decision_type: str = "", limit: int = 30,
     ) -> List[Dict]:
