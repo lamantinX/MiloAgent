@@ -205,12 +205,15 @@ class AccountManager:
             if self._statuses.get(key) == self.COOLDOWN:
                 self._statuses[key] = self.HEALTHY
 
-    def get_next_account(self, platform: str) -> Optional[Dict]:
+    def get_next_account(self, platform: str, project: Optional[str] = None) -> Optional[Dict]:
         """Get the next available (healthy, not on cooldown) account.
 
         Uses round-robin rotation: never picks the same account twice in a row,
         then falls back to LRU (fewest actions in 4h) as tiebreaker.
         Thread-safe via self._lock.
+
+        If project is specified, prefers accounts assigned to that project.
+        Falls back to all accounts if none are assigned to the project.
         """
         accounts = self.load_accounts(platform)
         if not accounts:
@@ -241,6 +244,16 @@ class AccountManager:
             if not available:
                 logger.warning(f"No available {platform} accounts")
                 return None
+
+            # Filter by project if specified -- only consider accounts assigned to this project
+            if project:
+                project_accounts = [
+                    a for a in available
+                    if project in (a.get("assigned_projects") or [])
+                ]
+                if project_accounts:
+                    available = project_accounts
+                # else fall back to all available accounts
 
             # True round-robin: rotate through ALL available accounts fairly
             # Step 1: advance the rotation index

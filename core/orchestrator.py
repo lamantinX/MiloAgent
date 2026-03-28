@@ -54,7 +54,7 @@ from safety.ban_detector import BanDetector
 logger = logging.getLogger(__name__)
 
 # ── Hard Safety Limits ────────────────────────────────────────────
-MAX_SUBREDDITS_PER_SCAN = 12    # Never scan more than 12 subs per cycle
+MAX_SUBREDDITS_PER_SCAN = 8     # Never scan more than 8 subs per cycle (8 projects x ~120s/project = ~960s < 1200s timeout)
 MAX_KEYWORDS_PER_SUBREDDIT = 8  # Never search more than 8 keywords per sub
 SCAN_TIMEOUT_SECONDS = 1200     # Hard timeout for entire scan (8 projects, conservative delays)
 ACT_TIMEOUT_SECONDS = 150       # Hard timeout for action operations (Reddit needs 60-90s)
@@ -169,7 +169,7 @@ class Orchestrator:
         self._alert_log: deque = deque(maxlen=100)
 
         # Subreddit rotation index (for round-robin across cycles)
-        self._sub_rotation_index: int = 0
+        self._sub_rotation_index: Dict[str, int] = {}  # per-project rotation index
 
         # Platform rotation (thread-safe) — lock protects _platform_turn AND _sub_rotation_index
         self._platform_turn: int = 0
@@ -843,10 +843,11 @@ class Orchestrator:
             all_subs = []
 
         if len(all_subs) > MAX_SUBREDDITS_PER_SCAN:
-            # Round-robin: pick the next batch (thread-safe)
+            # Round-robin: pick the next batch per project (thread-safe)
+            proj_name = limited.get("project", {}).get("name", "default")
             with self._state_lock:
-                start = self._sub_rotation_index % len(all_subs)
-                self._sub_rotation_index = (start + MAX_SUBREDDITS_PER_SCAN) % len(all_subs)
+                start = self._sub_rotation_index.get(proj_name, 0) % len(all_subs)
+                self._sub_rotation_index[proj_name] = (start + MAX_SUBREDDITS_PER_SCAN) % len(all_subs)
             selected = []
             for i in range(MAX_SUBREDDITS_PER_SCAN):
                 idx = (start + i) % len(all_subs)
@@ -935,14 +936,14 @@ class Orchestrator:
         for platform in platforms:
             # Telegram gets lower min_score because its metrics
             # produce lower scores than Reddit (no upvote counts in scan).
-            min_score = 3.0 if platform == "telegram" else 5.0
+            min_score = 3.0 if platform == "telegram" else 3.5  # was 5.0 — too high, starved 4/8 projects
             pending = self.db.get_pending_opportunities(
                 platform=platform, project=proj_name, min_score=min_score, limit=10
             )
             if not pending:
                 continue
 
-            account = self.account_mgr.get_next_account(platform)
+            account = self.account_mgr.get_next_account(platform, project=proj_name)
             if not account:
                 continue
 
