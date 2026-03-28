@@ -54,7 +54,7 @@ from safety.ban_detector import BanDetector
 logger = logging.getLogger(__name__)
 
 # ── Hard Safety Limits ────────────────────────────────────────────
-MAX_SUBREDDITS_PER_SCAN = 8     # Never scan more than 8 subs per cycle (8 projects x ~120s/project = ~960s < 1200s timeout)
+MAX_SUBREDDITS_PER_SCAN = 5     # Never scan more than 5 subs per cycle (8 projects x ~130s/project = ~1040s < 1200s timeout)
 MAX_KEYWORDS_PER_SUBREDDIT = 8  # Never search more than 8 keywords per sub
 SCAN_TIMEOUT_SECONDS = 1200     # Hard timeout for entire scan (8 projects, conservative delays)
 ACT_TIMEOUT_SECONDS = 150       # Hard timeout for action operations (Reddit needs 60-90s)
