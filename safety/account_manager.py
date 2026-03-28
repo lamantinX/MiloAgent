@@ -30,7 +30,9 @@ class AccountManager:
     BANNED = "banned"
 
     # Karma thresholds for write operations
-    MIN_KARMA_WRITE = 10    # Below this: skip account for comments/posts
+    # Only block accounts with clearly negative karma (downvoted/shadowbanned)
+    # New accounts start at 1 karma and must not be blocked entirely
+    MIN_KARMA_WRITE = -5    # Below this: skip account for write ops (shadowbanned risk)
     KARMA_CACHE_TTL = 43200  # 12 hours in seconds
 
     def __init__(self, db: Database, config_dir: str = "config/"):

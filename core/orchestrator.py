@@ -2339,9 +2339,11 @@ class Orchestrator:
                         refreshed += 1
                         if total_karma < self.account_mgr.MIN_KARMA_WRITE:
                             logger.warning(
-                                f"Low karma account: {username} karma={total_karma} "
-                                f"(threshold={self.account_mgr.MIN_KARMA_WRITE}) -- will skip write ops"
+                                f"Negative karma account BLOCKED from writes: {username} "
+                                f"karma={total_karma} (threshold={self.account_mgr.MIN_KARMA_WRITE})"
                             )
+                        elif total_karma < 10:
+                            logger.info(f"New account (low karma): {username} karma={total_karma} -- allowed but watched")
                         time.sleep(random.uniform(2, 5))
                 except Exception as e:
                     logger.debug(f"Karma refresh failed for {username}: {e}")
