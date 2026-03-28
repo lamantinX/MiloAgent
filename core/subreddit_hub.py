@@ -403,7 +403,7 @@ Rules:
 
     def _get_scheduled_content(self, hub: Dict, project: Dict) -> Optional[Dict]:
         """Get scheduled content for today if applicable and not already posted."""
-        today = datetime.now().weekday()
+        today = datetime.utcnow().weekday()
         schedule = HUB_CONTENT_SCHEDULE.get(today)
         if not schedule:
             return None

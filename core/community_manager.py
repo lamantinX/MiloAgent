@@ -777,7 +777,7 @@ Reply with exactly one word: APPROVE, REMOVE, or IGNORE."""
         keeping the rules post in slot 2.
         """
         proj_name = project.get("project", {}).get("name", "unknown")
-        now = datetime.now()
+        now = datetime.utcnow()
         week_str = now.strftime("%B %d, %Y")
 
         title = f"Weekly Discussion Thread — {week_str}"
@@ -820,7 +820,7 @@ Reply with exactly one word: APPROVE, REMOVE, or IGNORE."""
 
         try:
             last_dt = datetime.fromisoformat(last_post)
-            return (datetime.now() - last_dt) > timedelta(days=refresh_days)
+            return (datetime.utcnow() - last_dt) > timedelta(days=refresh_days)
         except Exception:
             return True
 

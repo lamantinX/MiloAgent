@@ -1181,7 +1181,7 @@ class TelegramDashboard:
     # ── Reports ──────────────────────────────────────────────────────
 
     def _generate_daily_report(self) -> str:
-        now = datetime.now()
+        now = datetime.utcnow()
         stats = self.db.get_stats_summary(hours=24)
 
         report = f"Daily recap — {now.strftime('%B %d, %Y')}\n\n"

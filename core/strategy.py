@@ -513,7 +513,7 @@ class StrategyEngine:
                 try:
                     from datetime import datetime, timedelta
                     ts = datetime.fromisoformat(a["timestamp"])
-                    if datetime.now() - ts < timedelta(hours=min_gap_hours):
+                    if datetime.utcnow() - ts < timedelta(hours=min_gap_hours):
                         logger.debug("User post skipped: min gap not met")
                         return None
                 except Exception:

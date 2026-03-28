@@ -206,7 +206,7 @@ class _ResourceSampler:
     def sample(self, cpu_pct: float, ram_pct: float, disk_pct: float):
         with self._lock:
             self.samples.append({
-                "ts": datetime.now().strftime("%H:%M:%S"),
+                "ts": datetime.utcnow().strftime("%H:%M:%S"),
                 "cpu": round(cpu_pct, 1),
                 "ram": round(ram_pct, 1),
                 "disk": round(disk_pct, 1),

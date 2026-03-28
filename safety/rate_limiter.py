@@ -167,7 +167,7 @@ class RateLimiter:
 
         Handles midnight-spanning ranges, e.g. [22, 4] means 10 PM to 4 AM.
         """
-        hour = datetime.now().hour
+        hour = datetime.utcnow().hour
         start, end = self.active_hours
         if start <= end:
             # Normal range: e.g. [8, 23]
@@ -178,7 +178,7 @@ class RateLimiter:
 
     def is_weekend(self) -> bool:
         """Check if today is a weekend."""
-        return datetime.now().weekday() >= 5
+        return datetime.utcnow().weekday() >= 5
 
     def get_weekend_factor(self) -> float:
         """Get activity reduction factor for weekends (0.5 = 50% less)."""

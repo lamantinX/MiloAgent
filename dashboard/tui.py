@@ -741,7 +741,7 @@ class RichDashboard:
             for job in sorted(jobs, key=lambda j: (j.next_run_time is None, str(j.next_run_time or ""))):
                 next_run = "[dim]off[/]"
                 if job.next_run_time:
-                    delta = (job.next_run_time.replace(tzinfo=None) - datetime.now()).total_seconds()
+                    delta = (job.next_run_time.replace(tzinfo=None) - datetime.utcnow()).total_seconds()
                     if delta < 0:
                         next_run = "[red]now![/]"
                     elif delta < 60:

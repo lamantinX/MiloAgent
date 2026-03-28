@@ -135,7 +135,7 @@ class RelationshipEngine:
             last = existing.get("last_updated", "")
             try:
                 last_dt = datetime.fromisoformat(last)
-                if (datetime.now() - last_dt).days < 7:
+                if (datetime.utcnow() - last_dt).days < 7:
                     return existing  # Fresh enough
             except Exception:
                 pass
@@ -189,7 +189,7 @@ class RelationshipEngine:
                     # Schedule next action for newly warm relationships
                     if new_stage == "warm":
                         next_time = (
-                            datetime.now() + timedelta(hours=random.randint(12, 48))
+                            datetime.utcnow() + timedelta(hours=random.randint(12, 48))
                         ).isoformat()
                         self.db.upsert_relationship(
                             rel["platform"], rel["username"],
@@ -210,7 +210,7 @@ class RelationshipEngine:
         days_known = 0
         try:
             first_dt = datetime.fromisoformat(first)
-            days_known = (datetime.now() - first_dt).days
+            days_known = (datetime.utcnow() - first_dt).days
         except Exception:
             pass
 
@@ -249,7 +249,7 @@ class RelationshipEngine:
             if last_sent:
                 try:
                     last_ts = datetime.fromisoformat(last_sent[-1]["timestamp"])
-                    hours_since = (datetime.now() - last_ts).total_seconds() / 3600
+                    hours_since = (datetime.utcnow() - last_ts).total_seconds() / 3600
                     if hours_since < MIN_HOURS_BETWEEN_DMS:
                         return False
                 except Exception:
@@ -423,7 +423,7 @@ class RelationshipEngine:
 
             # Schedule reply
             reply_time = (
-                datetime.now() + timedelta(hours=random.randint(2, 12))
+                datetime.utcnow() + timedelta(hours=random.randint(2, 12))
             ).isoformat()
             self.db.upsert_relationship(
                 platform, author, our_account, project,

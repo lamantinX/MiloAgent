@@ -192,7 +192,7 @@ class Orchestrator:
     def _send_telegram_alert(self, message: str):
         """Send a Telegram alert safely from any thread."""
         # Always buffer for TUI conversations view
-        self._alert_log.append((datetime.now().isoformat(), message))
+        self._alert_log.append((datetime.utcnow().isoformat(), message))
 
         if not self.telegram:
             return
@@ -401,7 +401,7 @@ class Orchestrator:
         from datetime import datetime, timedelta
 
         # First scan delayed by 2 minutes (let system settle)
-        first_scan_time = datetime.now() + timedelta(minutes=2)
+        first_scan_time = datetime.utcnow() + timedelta(minutes=2)
 
         self.scheduler.add_job(
             self._scan_all_safe, "interval",
@@ -411,60 +411,60 @@ class Orchestrator:
         self.scheduler.add_job(
             self._act_on_best_safe, "interval",
             minutes=action_interval, id="act_best",
-            next_run_time=datetime.now() + timedelta(minutes=3),
+            next_run_time=datetime.utcnow() + timedelta(minutes=3),
         )
         self.scheduler.add_job(
             self._health_check, "interval",
             minutes=60, id="health_check",
-            next_run_time=datetime.now() + timedelta(minutes=10),
+            next_run_time=datetime.utcnow() + timedelta(minutes=10),
         )
         self.scheduler.add_job(
             self._learn, "interval",
             hours=6, id="learn",
-            next_run_time=datetime.now() + timedelta(minutes=30),
+            next_run_time=datetime.utcnow() + timedelta(minutes=30),
         )
         self.scheduler.add_job(
             self._verify_comments, "interval",
             hours=1, id="verify_comments",
-            next_run_time=datetime.now() + timedelta(minutes=20),
+            next_run_time=datetime.utcnow() + timedelta(minutes=20),
         )
         self.scheduler.add_job(
             self._seed_content, "interval",
             hours=6, id="seed_content",
-            next_run_time=datetime.now() + timedelta(minutes=15),
+            next_run_time=datetime.utcnow() + timedelta(minutes=15),
         )
         # Tweet cycle DISABLED: Twitter blocked on server (code 226)
         # self.scheduler.add_job(
         #     self._tweet_cycle_safe, "interval",
         #     hours=4, id="tweet_cycle",
-        #     next_run_time=datetime.now() + timedelta(minutes=8),
+        #     next_run_time=datetime.utcnow() + timedelta(minutes=8),
         # )
         self.scheduler.add_job(
             self._engage_safe, "interval",
             hours=2, id="engagement",
-            next_run_time=datetime.now() + timedelta(minutes=5),
+            next_run_time=datetime.utcnow() + timedelta(minutes=5),
         )
         self.scheduler.add_job(
             self._curate_and_share, "interval",
             hours=8, id="curate_content",
-            next_run_time=datetime.now() + timedelta(minutes=20),
+            next_run_time=datetime.utcnow() + timedelta(minutes=20),
         )
 
         # Phase 5: Intelligence + Self-Improvement jobs
         self.scheduler.add_job(
             self._analyze_subreddits_safe, "interval",
             hours=12, id="subreddit_intel",
-            next_run_time=datetime.now() + timedelta(minutes=45),
+            next_run_time=datetime.utcnow() + timedelta(minutes=45),
         )
         self.scheduler.add_job(
             self._maintain_presence_safe, "interval",
             hours=6, id="community_presence",
-            next_run_time=datetime.now() + timedelta(minutes=15),
+            next_run_time=datetime.utcnow() + timedelta(minutes=15),
         )
         self.scheduler.add_job(
             self._research_safe, "interval",
             hours=12, id="research",
-            next_run_time=datetime.now() + timedelta(minutes=50),
+            next_run_time=datetime.utcnow() + timedelta(minutes=50),
         )
         self.scheduler.add_job(
             self._send_weekly_report, "cron",
@@ -473,29 +473,29 @@ class Orchestrator:
         self.scheduler.add_job(
             self._build_relationships_safe, "interval",
             hours=8, id="relationships",
-            next_run_time=datetime.now() + timedelta(minutes=60),
+            next_run_time=datetime.utcnow() + timedelta(minutes=60),
         )
         self.scheduler.add_job(
             self._animate_hubs_safe, "interval",
             hours=4, id="hub_animation",
-            next_run_time=datetime.now() + timedelta(minutes=45),
+            next_run_time=datetime.utcnow() + timedelta(minutes=45),
         )
         # Community management: setup, moderation, stickies (every 4h)
         self.scheduler.add_job(
             self._manage_communities_safe, "interval",
             hours=4, id="community_management",
-            next_run_time=datetime.now() + timedelta(minutes=100),
+            next_run_time=datetime.utcnow() + timedelta(minutes=100),
         )
         # Takeover scan: find abandoned subreddits (daily)
         self.scheduler.add_job(
             self._scan_takeover_targets_safe, "interval",
             hours=24, id="takeover_scan",
-            next_run_time=datetime.now() + timedelta(hours=3),
+            next_run_time=datetime.utcnow() + timedelta(hours=3),
         )
         self.scheduler.add_job(
             self._auto_improve_safe, "interval",
             hours=12, id="auto_improve",
-            next_run_time=datetime.now() + timedelta(minutes=120),
+            next_run_time=datetime.utcnow() + timedelta(minutes=120),
         )
         # Periodic opportunity cleanup (every 6h)
         self.scheduler.add_job(
@@ -503,7 +503,7 @@ class Orchestrator:
                 min_score=3.0, max_age_hours=24
             ),
             "interval", hours=6, id="opportunity_purge",
-            next_run_time=datetime.now() + timedelta(minutes=30),
+            next_run_time=datetime.utcnow() + timedelta(minutes=30),
         )
 
         # Daily report
@@ -527,7 +527,7 @@ class Orchestrator:
         self.scheduler.add_job(
             self._db_maintenance, "interval",
             hours=12, id="db_maintenance",
-            next_run_time=datetime.now() + timedelta(hours=1),
+            next_run_time=datetime.utcnow() + timedelta(hours=1),
         )
 
         # Log scheduled job failures and auto-recover
@@ -2609,7 +2609,7 @@ class Orchestrator:
             # Get current presence
             presence = self.db.get_presence_for_subreddit(sub, project, account)
             from datetime import datetime
-            now = datetime.now().isoformat()
+            now = datetime.utcnow().isoformat()
 
             if presence:
                 updates = {"last_activity": now}
@@ -2844,7 +2844,7 @@ class Orchestrator:
             hubs = self.hub_manager.get_hubs(proj_name)
 
             # Filter to ready hubs (setup_complete or >24h old)
-            now = datetime.now()
+            now = datetime.utcnow()
             ready_hubs = [h for h in hubs if h.get("setup_complete")]
             if not ready_hubs:
                 for h in hubs:
