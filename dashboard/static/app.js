@@ -1044,7 +1044,35 @@ function renderManageAccounts(d) {
   if (!el) return;
   if (!d||!d.length) { el.innerHTML='<p class="no-data">No accounts</p>'; return; }
   const filtered = d.filter(a => a.platform !== 'twitter');
-  el.innerHTML = filtered.map(a => `<div class="entity-card"><div><div class="name">@${esc(a.username)} <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">${esc(a.platform)}</span></div><div class="meta">${a.total_24h||0} actions — C:${a.comments||0} L:${a.likes||0} P:${a.posts||0} — ${esc(a.persona||'default')}</div></div><div class="actions-area">${hpBar(a.status)}<span class="badge ${a.status==='healthy'?'healthy':a.status==='cooldown'?'cooldown':'error'}">${esc(a.status)}</span><button class="btn btn-sm danger" onclick="removeAccount(${JSON.stringify(a.platform)},${JSON.stringify(a.username)})">Remove</button></div></div>`).join('');
+  const tierColor = {veteran:'var(--gold,#f5c518)',established:'var(--green)',growing:'var(--blue)',new:'var(--text3)'};
+  const tierIcon  = {veteran:'★',established:'◆',growing:'▲',new:'○'};
+  el.innerHTML = filtered.map(a => {
+    const tn = a.tier_name||'new';
+    const karma = a.karma!=null ? `karma ${a.karma}` : 'karma ?';
+    const cap = a.daily_cap||3;
+    const canPost = a.can_post ? '' : ' · comments only';
+    const tierBadge = `<span style="color:${tierColor[tn]||'var(--text3)'};font-size:11px;font-weight:700;letter-spacing:.5px">${tierIcon[tn]||'○'} ${tn.toUpperCase()}</span>`;
+    const writeCount = (a.types||{}).comment||0 + (a.types||{}).post||0;
+    return `<div class="entity-card">
+      <div style="flex:1">
+        <div class="name" style="display:flex;align-items:center;gap:8px">
+          @${esc(a.username)}
+          <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase">${esc(a.platform)}</span>
+          ${tierBadge}
+        </div>
+        <div class="meta">${karma} · cap ${cap}/day${canPost} · ${a.total_24h||0} actions today (C:${a.comments||0} P:${a.posts||0})</div>
+        <div class="meta" style="color:${a.has_cookies?'var(--green)':'var(--red)'}">
+          ${a.has_cookies ? '● cookies active' : '● no cookies — login needed'}
+          ${a.enabled===false ? ' · <span style="color:var(--red)">disabled</span>' : ''}
+        </div>
+      </div>
+      <div class="actions-area">
+        ${hpBar(a.status)}
+        <span class="badge ${a.status==='healthy'?'healthy':a.status==='cooldown'?'cooldown':'error'}">${esc(a.status)}</span>
+        <button class="btn btn-sm danger" onclick="removeAccount(${JSON.stringify(a.platform)},${JSON.stringify(a.username)})">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1253,10 +1281,19 @@ async function deleteProject(name) {
 // CRUD: ACCOUNTS
 // ══════════════════════════════════════════════════════════════
 async function submitAccount() {
-  const platform=document.getElementById('aPlat').value, username=document.getElementById('aUser').value.trim(), password=document.getElementById('aPass').value.trim();
+  const platform=document.getElementById('aPlat').value,
+        username=document.getElementById('aUser').value.trim(),
+        password=document.getElementById('aPass').value.trim();
   if (!username||!password) { toast('Username and Password required','error'); return; }
+  const projectsRaw = (document.getElementById('aProjects')||{}).value||'';
+  const projects = projectsRaw ? projectsRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
   try {
-    const d = await apiPost('/api/accounts', {platform,username,password,email:document.getElementById('aEmail').value.trim(),persona:document.getElementById('aPersona').value});
+    const d = await apiPost('/api/accounts', {
+      platform, username, password,
+      email: document.getElementById('aEmail').value.trim(),
+      persona: document.getElementById('aPersona').value,
+      projects,
+    });
     toast(d.message||'Done', d.ok?'success':'error');
     if (d.ok) { closeModal(); refresh(); }
   } catch(e) { toast(e.message,'error'); }

@@ -523,11 +523,16 @@ class AccountManager:
         Returns status message.
         """
         if platform == "reddit":
-            path = f"{self.config_dir}/reddit_accounts.yaml"
+            base = f"{self.config_dir}/reddit_accounts"
         elif platform == "twitter":
-            path = f"{self.config_dir}/twitter_accounts.yaml"
+            base = f"{self.config_dir}/twitter_accounts"
         else:
             return f"Unknown platform: {platform}"
+
+        # Always write to .local.yaml when it exists (server config), else .yaml
+        local_path = f"{base}.local.yaml"
+        default_path = f"{base}.yaml"
+        path = local_path if os.path.exists(local_path) else default_path
 
         # Load existing config
         try:
@@ -600,11 +605,15 @@ class AccountManager:
     def remove_account(self, platform: str, username: str) -> str:
         """Disable an account in the config (sets enabled: false)."""
         if platform == "reddit":
-            path = f"{self.config_dir}/reddit_accounts.yaml"
+            base = f"{self.config_dir}/reddit_accounts"
         elif platform == "twitter":
-            path = f"{self.config_dir}/twitter_accounts.yaml"
+            base = f"{self.config_dir}/twitter_accounts"
         else:
             return f"Unknown platform: {platform}"
+
+        local_path = f"{base}.local.yaml"
+        default_path = f"{base}.yaml"
+        path = local_path if os.path.exists(local_path) else default_path
 
         try:
             with open(path) as f:
