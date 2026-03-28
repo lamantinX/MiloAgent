@@ -4,54 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiloAgent — AI Growth Agent Mission Control</title>
-<meta name="description" content="MiloAgent is an autonomous AI growth agent for Reddit, Twitter/X and Telegram. Self-learning bot with LLM content generation, multi-account management, community automation, A/B testing. Zero cost, open source.">
-<meta name="keywords" content="MiloAgent, AI agent, Reddit bot, growth hacking, social media automation, LLM, Groq, Gemini, Ollama, community management, self-learning bot, open source">
-<meta name="author" content="SoCloseSociety">
+<meta name="description" content="MiloAgent is an autonomous AI growth agent for Reddit, Twitter/X and Telegram.">
 <meta name="robots" content="index, follow">
-<link rel="canonical" href="https://github.com/SoCloseSociety/MiloAgent">
-
-<!-- Open Graph / Facebook -->
-<meta property="og:type" content="website">
-<meta property="og:title" content="MiloAgent — Autonomous AI Growth Agent">
-<meta property="og:description" content="Self-learning AI agent that grows your product on Reddit, Twitter/X & Telegram. LLM-powered content, multi-account, community automation. Zero cost.">
-<meta property="og:image" content="/static/miloagent.png">
-<meta property="og:site_name" content="MiloAgent">
-
-<!-- Twitter Card -->
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="MiloAgent — AI Growth Agent">
-<meta name="twitter:description" content="Autonomous AI agent for Reddit, Twitter/X & Telegram. Self-learning, LLM-powered, zero cost.">
-<meta name="twitter:image" content="/static/miloagent.png">
-
-<!-- Structured Data (JSON-LD) for Google Search -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "MiloAgent",
-  "alternateName": "Milo AI Growth Agent",
-  "description": "Autonomous AI growth agent for Reddit, Twitter/X and Telegram. Self-learning bot with LLM-powered content generation, multi-account management, community automation, and A/B testing.",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, macOS, Windows (Docker)",
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
-  },
-  "author": {
-    "@type": "Organization",
-    "name": "SoCloseSociety",
-    "url": "https://github.com/SoCloseSociety"
-  },
-  "url": "https://github.com/SoCloseSociety/MiloAgent",
-  "downloadUrl": "https://github.com/SoCloseSociety/MiloAgent",
-  "softwareVersion": "4.0",
-  "license": "https://opensource.org/licenses/MIT",
-  "programmingLanguage": "Python",
-  "image": "https://raw.githubusercontent.com/SoCloseSociety/MiloAgent/main/assets/miloagent.png"
-}
-</script>
-
 <link rel="icon" type="image/png" href="/static/miloagent.png">
 <link rel="apple-touch-icon" href="/static/miloagent.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -67,7 +21,7 @@
 <!-- ═══════════════════ LOGIN ═══════════════════ -->
 <div id="loginPage" class="login-page">
   <div class="login-box">
-    <img src="/static/miloagent.png" alt="MiloAgent" style="width:80px;height:80px;margin-bottom:16px;border-radius:50%;border:2px solid var(--border);box-shadow:0 0 40px rgba(0,240,255,.12)">
+    <img src="/static/miloagent.png" alt="MiloAgent" style="width:80px;height:80px;margin-bottom:16px;border-radius:50%;border:2px solid var(--border);box-shadow:0 0 40px rgba(249,168,212,.08)">
     <div class="logo">MILOAGENT</div>
     <div class="logo-sub">Mission Control</div>
     <div class="field">
@@ -93,7 +47,7 @@
       </button>
       <img src="/static/miloagent.png" alt="" style="width:28px;height:28px;border-radius:50%">
       <span class="mc-logo">MILOAGENT</span>
-      <span class="mc-badge" id="mcVersion">v4.0</span>
+      <span class="mc-badge" id="mcVersion">v6.0</span>
       <span class="mc-badge" id="mcMode">server</span>
     </div>
     <div class="mc-right">
@@ -108,9 +62,9 @@
 
   <!-- Live Metrics Ribbon -->
   <div class="metrics-ribbon" id="metricsRibbon">
-    <div class="metric-pill"><span class="mv" id="mrActions" style="color:var(--neon-green)">0</span><span class="ml">Actions/24h</span></div>
-    <div class="metric-pill"><span class="mv" id="mrReddit" style="color:var(--neon-orange)">0</span><span class="ml">Reddit</span></div>
-    <div class="metric-pill"><span class="mv" id="mrTelegram" style="color:var(--neon-cyan)">0</span><span class="ml">Telegram</span></div>
+    <div class="metric-pill"><span class="mv" id="mrActions" style="color:var(--accent)">0</span><span class="ml">Actions/24h</span></div>
+    <div class="metric-pill"><span class="mv" id="mrReddit" style="color:var(--orange)">0</span><span class="ml">Reddit</span></div>
+    <div class="metric-pill"><span class="mv" id="mrTelegram" style="color:var(--cyan)">0</span><span class="ml">Telegram</span></div>
     <div class="metric-pill"><span class="mv" id="mrOpps" style="color:var(--yellow)">0</span><span class="ml">Opportunities</span></div>
     <div class="metric-pill"><span class="mv" id="mrAccounts" style="color:var(--blue)">0</span><span class="ml">Accounts</span></div>
     <div class="metric-pill"><span class="mv" id="mrHubs" style="color:var(--pink)">0</span><span class="ml">Communities</span></div>
@@ -118,16 +72,13 @@
     <div class="metric-pill"><span class="mv" id="mrRAM" style="color:var(--text)">-</span><span class="ml">RAM</span></div>
   </div>
 
-  <!-- Navigation Tabs -->
+  <!-- Navigation Tabs — 5 tabs -->
   <div class="nav-tabs">
-    <div class="nav-tab active" data-tab="command" onclick="switchTab('command')"><span class="tab-icon">&#9678;</span>Command</div>
-    <div class="nav-tab" data-tab="activity" onclick="switchTab('activity')"><span class="tab-icon">&#9632;</span>Activity<span class="tab-badge err-badge" id="tabErrBadge"></span></div>
+    <div class="nav-tab active" data-tab="command" onclick="switchTab('command')"><span class="tab-icon">&#9678;</span>Mission Control</div>
+    <div class="nav-tab" data-tab="liveops" onclick="switchTab('liveops')"><span class="tab-icon">&#9632;</span>Live Ops<span class="tab-badge err-badge" id="tabErrBadge"></span></div>
     <div class="nav-tab" data-tab="intel" onclick="switchTab('intel')"><span class="tab-icon">&#9733;</span>Intelligence<span class="tab-badge score-badge" id="tabScoreBadge"></span></div>
-    <div class="nav-tab" data-tab="radar" onclick="switchTab('radar')"><span class="tab-icon">&#9678;</span>Radar</div>
     <div class="nav-tab" data-tab="communities" onclick="switchTab('communities')"><span class="tab-icon">&#9673;</span>Communities</div>
-    <div class="nav-tab" data-tab="manage" onclick="switchTab('manage')"><span class="tab-icon">&#9881;</span>Accounts</div>
-    <div class="nav-tab" data-tab="network" onclick="switchTab('network')"><span class="tab-icon">&#9670;</span>Network</div>
-    <div class="nav-tab" data-tab="server" onclick="switchTab('server')"><span class="tab-icon">&#9652;</span>Server<span class="tab-badge cpu-badge" id="tabCpuBadge"></span></div>
+    <div class="nav-tab" data-tab="config" onclick="switchTab('config')"><span class="tab-icon">&#9881;</span>Config<span class="tab-badge cpu-badge" id="tabCpuBadge"></span></div>
   </div>
 
   <!-- Global Status Bar -->
@@ -149,11 +100,11 @@
 
   <!-- Emergency Banner -->
   <div id="emergencyBanner" class="emergency-banner">
-    <span>EMERGENCY STOP ACTIVE — All operations frozen</span>
+    <span>EMERGENCY STOP ACTIVE -- All operations frozen</span>
     <button class="btn btn-sm success" onclick="emergencyReset()">Reset</button>
   </div>
 
-  <!-- ═══════ TAB: Command Center ═══════ -->
+  <!-- ═══════ TAB 1: MISSION CONTROL ═══════ -->
   <div id="tab-command" class="tab-content active">
     <div class="stat-grid" id="statsRow"></div>
     <div class="grid">
@@ -167,11 +118,6 @@
         <h2><span class="card-icon">&#9679;</span> Activity Timeline (7d)</h2>
         <div class="chart-wrap"><canvas id="chartTimeline"></canvas></div>
       </div>
-      <!-- Activity Heatmap -->
-      <div class="card full glow-cyan">
-        <h2><span class="card-icon">&#9632;</span> Activity Heatmap (28d)</h2>
-        <div id="heatmapContainer"></div>
-      </div>
       <!-- Opportunity Funnel -->
       <div class="card glow-orange">
         <h2><span class="card-icon">&#9660;</span> Opportunity Funnel</h2>
@@ -180,14 +126,9 @@
       <!-- Reddit Minimap -->
       <div class="card glow-green">
         <h2>Reddit Map <span class="badge-count" id="redditCount">0</span></h2>
-        <div id="redditMap" style="max-height:320px;overflow-y:auto"></div>
+        <div id="redditMap" style="max-height:280px;overflow-y:auto"></div>
       </div>
-      <!-- Telegram Summary -->
-      <div class="card glow-cyan">
-        <h2>Telegram Activity <span class="badge-count" id="telegramCount">0</span></h2>
-        <div id="telegramPanel" style="max-height:320px;overflow-y:auto"></div>
-      </div>
-      <!-- Agent Controls -->
+      <!-- Agent Controls + Schedule side by side -->
       <div class="card">
         <h2>Agent Controls</h2>
         <div class="controls-grid">
@@ -207,10 +148,19 @@
           <button id="btnEmergency" class="btn btn-sm danger" onclick="emergencyStop()" style="flex:1;font-weight:800;letter-spacing:.5px">EMERGENCY STOP</button>
         </div>
       </div>
-      <!-- Schedule -->
       <div class="card">
         <h2>Scheduled Jobs</h2>
         <div id="scheduleList" style="max-height:280px;overflow-y:auto"></div>
+      </div>
+      <!-- Telegram Summary -->
+      <div class="card glow-cyan">
+        <h2>Telegram Activity <span class="badge-count" id="telegramCount">0</span></h2>
+        <div id="telegramPanel" style="max-height:280px;overflow-y:auto"></div>
+      </div>
+      <!-- Heatmap -->
+      <div class="card glow-cyan">
+        <h2><span class="card-icon">&#9632;</span> Activity Heatmap (28d)</h2>
+        <div id="heatmapContainer"></div>
       </div>
       <!-- Per-Account Reddit Performance -->
       <div class="card full glow-purple">
@@ -220,8 +170,8 @@
     </div>
   </div>
 
-  <!-- ═══════ TAB: Activity ═══════ -->
-  <div id="tab-activity" class="tab-content">
+  <!-- ═══════ TAB 2: LIVE OPS (merged Activity + Server logs) ═══════ -->
+  <div id="tab-liveops" class="tab-content">
     <div class="grid">
       <div class="card full glow-cyan">
         <h2>Live Agent Feed <span class="badge-count err-glow" id="feedErrCount" style="display:none">0</span></h2>
@@ -234,6 +184,7 @@
           <button class="btn btn-xs feed-pill-hub" onclick="filterFeed('HUB')">Hub</button>
           <button class="btn btn-xs feed-pill-learn" onclick="filterFeed('LEARN')">Learn</button>
           <button class="btn btn-xs feed-pill-pres" onclick="filterFeed('PRES')">Presence</button>
+          <label class="feed-noise-toggle"><input type="checkbox" id="feedNoiseToggle" onchange="toggleNoise()"> Show health checks</label>
           <span class="feed-auto-scroll" id="feedAutoScroll" onclick="toggleAutoScroll()">Auto-scroll: ON</span>
         </div>
         <div id="chatFeed" class="chat-feed"></div>
@@ -248,89 +199,127 @@
         <div class="section-label" style="margin-top:14px">Telegram Alerts</div>
         <div id="alertList" style="max-height:200px;overflow-y:auto"></div>
       </div>
+      <div class="card full">
+        <h2>Server Logs <span class="badge-count" id="logCount">0</span></h2>
+        <div id="logsPanel" class="feed" style="max-height:300px;font-family:var(--font-data);font-size:11px"></div>
+      </div>
     </div>
   </div>
 
-  <!-- ═══════ TAB: Intelligence ═══════ -->
+  <!-- ═══════ TAB 3: INTELLIGENCE (merged Intel + Radar + Network) ═══════ -->
   <div id="tab-intel" class="tab-content">
-    <div class="grid">
-      <!-- Row 1: Performance + Brain -->
-      <div class="card glow-green">
-        <h2>Performance Score</h2>
-        <div id="perfPanel"></div>
-      </div>
-      <div class="card glow-purple">
-        <h2>Agent Brain</h2>
-        <div id="brainPanel"></div>
-      </div>
-      <!-- Row 2: Trending + Knowledge + Discoveries -->
-      <div class="card glow-cyan">
-        <h2><span class="card-icon">&#9632;</span> Trending Feed <span class="badge-count" id="trendingCount">0</span></h2>
-        <div id="trendingFeed" class="feed" style="max-height:320px;overflow-y:auto"></div>
-      </div>
-      <div class="card glow-blue">
-        <h2><span class="card-icon">&#9679;</span> Knowledge Base <span class="badge-count" id="knowledgeCount">0</span></h2>
-        <div class="intel-filters" style="margin-bottom:8px;display:flex;gap:4px;flex-wrap:wrap">
-          <button class="btn btn-xs active" onclick="filterKnowledge('all')">All</button>
-          <button class="btn btn-xs" onclick="filterKnowledge('trend')">Trends</button>
-          <button class="btn btn-xs" onclick="filterKnowledge('news')">News</button>
-          <button class="btn btn-xs" onclick="filterKnowledge('talking_point')">Talking Pts</button>
-          <button class="btn btn-xs" onclick="filterKnowledge('strategy_rule')">Strategy</button>
+    <!-- Intel sub-tabs -->
+    <div class="intel-tabs">
+      <div class="intel-tab active" data-sub="overview" onclick="switchIntelSub('overview')">Overview</div>
+      <div class="intel-tab" data-sub="trends" onclick="switchIntelSub('trends')">Trends & Knowledge</div>
+      <div class="intel-tab" data-sub="analysis" onclick="switchIntelSub('analysis')">Analysis</div>
+      <div class="intel-tab" data-sub="radar" onclick="switchIntelSub('radar')">Topic Radar</div>
+      <div class="intel-tab" data-sub="network" onclick="switchIntelSub('network')">Network Graph</div>
+    </div>
+
+    <!-- Sub: Overview -->
+    <div id="isub-overview" class="intel-sub-content active">
+      <div class="grid">
+        <div class="card glow-green">
+          <h2>Performance Score</h2>
+          <div id="perfPanel"></div>
         </div>
-        <div id="knowledgeBase" class="feed" style="max-height:280px;overflow-y:auto"></div>
+        <div class="card glow-purple">
+          <h2>Agent Brain</h2>
+          <div id="brainPanel"></div>
+        </div>
+        <div class="card glow-purple">
+          <h2>Intelligence Insights</h2>
+          <div id="insightsPanel"></div>
+        </div>
+        <div class="card glow-orange">
+          <h2>Top Opportunities</h2>
+          <div id="oppsList" class="feed" style="max-height:320px"></div>
+        </div>
+        <div class="card full glow-cyan">
+          <h2><span class="card-icon">&#9733;</span> AI Decision Log <span class="badge-count" id="decisionCount">0</span></h2>
+          <div id="decisionLog" class="feed" style="max-height:280px;overflow-y:auto"></div>
+        </div>
       </div>
-      <div class="card glow-orange">
-        <h2><span class="card-icon">&#9733;</span> AI Discoveries <span class="badge-count" id="discoveriesCount">0</span></h2>
-        <div id="discoveriesList" class="feed" style="max-height:320px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Sub: Trends & Knowledge -->
+    <div id="isub-trends" class="intel-sub-content">
+      <div class="grid">
+        <div class="card glow-cyan">
+          <h2><span class="card-icon">&#9632;</span> Trending Feed <span class="badge-count" id="trendingCount">0</span></h2>
+          <div id="trendingFeed" class="feed" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+        <div class="card glow-blue">
+          <h2><span class="card-icon">&#9679;</span> Knowledge Base <span class="badge-count" id="knowledgeCount">0</span></h2>
+          <div class="intel-filters" style="margin-bottom:8px;display:flex;gap:4px;flex-wrap:wrap">
+            <button class="btn btn-xs active" onclick="filterKnowledge('all')">All</button>
+            <button class="btn btn-xs" onclick="filterKnowledge('trend')">Trends</button>
+            <button class="btn btn-xs" onclick="filterKnowledge('news')">News</button>
+            <button class="btn btn-xs" onclick="filterKnowledge('talking_point')">Talking Pts</button>
+            <button class="btn btn-xs" onclick="filterKnowledge('strategy_rule')">Strategy</button>
+          </div>
+          <div id="knowledgeBase" class="feed" style="max-height:350px;overflow-y:auto"></div>
+        </div>
+        <div class="card glow-orange">
+          <h2><span class="card-icon">&#9733;</span> AI Discoveries <span class="badge-count" id="discoveriesCount">0</span></h2>
+          <div id="discoveriesList" class="feed" style="max-height:350px;overflow-y:auto"></div>
+        </div>
       </div>
-      <!-- Row 3: Decision Log + Failures + Sentiment -->
-      <div class="card full glow-cyan">
-        <h2><span class="card-icon">&#9733;</span> AI Decision Log <span class="badge-count" id="decisionCount">0</span></h2>
-        <div id="decisionLog" class="feed" style="max-height:320px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Sub: Analysis -->
+    <div id="isub-analysis" class="intel-sub-content">
+      <div class="grid">
+        <div class="card glow-red">
+          <h2><span class="card-icon">&#9888;</span> Failure Patterns <span class="badge-count" id="failuresCount">0</span></h2>
+          <div id="failuresList" class="feed" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+        <div class="card glow-green">
+          <h2><span class="card-icon">&#9679;</span> Sentiment Map</h2>
+          <div id="sentimentMap" style="max-height:400px;overflow-y:auto"></div>
+        </div>
       </div>
-      <div class="card glow-purple">
-        <h2>Intelligence Insights</h2>
-        <div id="insightsPanel"></div>
+    </div>
+
+    <!-- Sub: Topic Radar -->
+    <div id="isub-radar" class="intel-sub-content">
+      <div class="radar-controls" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm active" onclick="filterRadar('all')">All</button>
+        <button class="btn btn-sm" onclick="filterRadar('subreddit')">Subreddits</button>
+        <button class="btn btn-sm" onclick="filterRadar('theme')">Trending</button>
+        <button class="btn btn-sm" onclick="filterRadar('keyword')">Keywords</button>
+        <button class="btn btn-sm" onclick="filterRadar('news')">News</button>
+        <button class="btn btn-sm" onclick="filterRadar('discovery')">Discoveries</button>
+        <span style="margin-left:auto;font-family:var(--font-data);font-size:11px;color:var(--text3)">Nodes: <span id="radarNodeCount">0</span></span>
       </div>
-      <div class="card glow-orange">
-        <h2>Top Opportunities</h2>
-        <div id="oppsList" class="feed" style="max-height:320px"></div>
+      <div style="display:flex;gap:12px">
+        <div class="card glow-cyan" style="flex:1;padding:0;overflow:hidden;position:relative">
+          <div id="radarUniverse" style="width:100%;min-height:500px;position:relative"></div>
+        </div>
+        <div id="radarSidebar" class="radar-sidebar" style="display:none">
+          <div class="radar-sidebar-close" onclick="closeRadarSidebar()">&times;</div>
+          <div id="radarSidebarContent"></div>
+        </div>
       </div>
-      <!-- Row 4: Failures + Sentiment -->
-      <div class="card glow-red">
-        <h2><span class="card-icon">&#9888;</span> Failure Patterns <span class="badge-count" id="failuresCount">0</span></h2>
-        <div id="failuresList" class="feed" style="max-height:300px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Sub: Network Graph -->
+    <div id="isub-network" class="intel-sub-content">
+      <div class="network-controls" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm active" onclick="filterNetwork('all')">All</button>
+        <button class="btn btn-sm" onclick="filterNetwork('account')">Accounts</button>
+        <button class="btn btn-sm" onclick="filterNetwork('relationship')">Relationships</button>
+        <button class="btn btn-sm" onclick="filterNetwork('subreddit')">Subreddits</button>
+        <span style="margin-left:auto;font-family:var(--font-data);font-size:11px;color:var(--text3)">Nodes: <span id="networkNodeCount">0</span></span>
       </div>
-      <div class="card glow-green">
-        <h2><span class="card-icon">&#9679;</span> Sentiment Map</h2>
-        <div id="sentimentMap" style="max-height:300px;overflow-y:auto"></div>
+      <div class="card full glow-cyan" style="padding:0;overflow:hidden">
+        <div id="networkGraph" style="width:100%;min-height:500px;position:relative"></div>
       </div>
     </div>
   </div>
 
-  <!-- ═══════ TAB: Radar — Topic Universe ═══════ -->
-  <div id="tab-radar" class="tab-content">
-    <div class="radar-controls" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="btn btn-sm active" onclick="filterRadar('all')">All</button>
-      <button class="btn btn-sm" onclick="filterRadar('subreddit')">Subreddits</button>
-      <button class="btn btn-sm" onclick="filterRadar('theme')">Trending</button>
-      <button class="btn btn-sm" onclick="filterRadar('keyword')">Keywords</button>
-      <button class="btn btn-sm" onclick="filterRadar('news')">News</button>
-      <button class="btn btn-sm" onclick="filterRadar('discovery')">Discoveries</button>
-      <span style="margin-left:auto;font-family:var(--font-data);font-size:11px;color:var(--text3)">Nodes: <span id="radarNodeCount">0</span></span>
-    </div>
-    <div style="display:flex;gap:12px">
-      <div class="card glow-cyan" style="flex:1;padding:0;overflow:hidden;position:relative">
-        <div id="radarUniverse" style="width:100%;min-height:600px;position:relative"></div>
-      </div>
-      <div id="radarSidebar" class="radar-sidebar" style="display:none">
-        <div class="radar-sidebar-close" onclick="closeRadarSidebar()">&times;</div>
-        <div id="radarSidebarContent"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════ TAB: Communities ═══════ -->
+  <!-- ═══════ TAB 4: COMMUNITIES ═══════ -->
   <div id="tab-communities" class="tab-content">
     <div class="stat-grid" id="commStats"></div>
     <div class="grid">
@@ -349,40 +338,9 @@
     </div>
   </div>
 
-  <!-- ═══════ TAB: Accounts & Projects ═══════ -->
-  <div id="tab-manage" class="tab-content">
-    <div class="grid">
-      <div class="card">
-        <h2>Projects <button class="btn btn-sm primary" onclick="openModal('addProject')">+ Add</button></h2>
-        <div id="projectsManage"></div>
-      </div>
-      <div class="card">
-        <h2>Accounts <button class="btn btn-sm primary" onclick="openModal('addAccount')">+ Add</button></h2>
-        <div id="accountsManage"></div>
-      </div>
-      <div class="card full">
-        <h2>Cookie Sessions <button class="btn btn-sm primary" onclick="openModal('pasteCookies')">Paste Cookies</button></h2>
-        <div id="cookiesStatus"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════ TAB: Network Graph ═══════ -->
-  <div id="tab-network" class="tab-content">
-    <div class="network-controls" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="btn btn-sm active" onclick="filterNetwork('all')">All</button>
-      <button class="btn btn-sm" onclick="filterNetwork('account')">Accounts</button>
-      <button class="btn btn-sm" onclick="filterNetwork('relationship')">Relationships</button>
-      <button class="btn btn-sm" onclick="filterNetwork('subreddit')">Subreddits</button>
-      <span style="margin-left:auto;font-family:var(--font-data);font-size:11px;color:var(--text3)">Nodes: <span id="networkNodeCount">0</span></span>
-    </div>
-    <div class="card full glow-cyan" style="padding:0;overflow:hidden">
-      <div id="networkGraph" style="width:100%;min-height:600px;position:relative"></div>
-    </div>
-  </div>
-
-  <!-- ═══════ TAB: Server ═══════ -->
-  <div id="tab-server" class="tab-content">
+  <!-- ═══════ TAB 5: CONFIG (merged Accounts + Server) ═══════ -->
+  <div id="tab-config" class="tab-content">
+    <!-- Server Stats -->
     <div class="stat-grid" id="serverStats"></div>
     <div id="serverBars" style="margin-bottom:16px"></div>
     <div class="grid">
@@ -392,11 +350,22 @@
       </div>
       <div class="card">
         <h2>All Scheduled Jobs</h2>
-        <div id="scheduleListFull" style="max-height:400px;overflow-y:auto"></div>
+        <div id="scheduleListFull" style="max-height:350px;overflow-y:auto"></div>
       </div>
+      <!-- Projects -->
+      <div class="card">
+        <h2>Projects <button class="btn btn-sm primary" onclick="openModal('addProject')">+ Add</button></h2>
+        <div id="projectsManage"></div>
+      </div>
+      <!-- Accounts -->
+      <div class="card">
+        <h2>Accounts <button class="btn btn-sm primary" onclick="openModal('addAccount')">+ Add</button></h2>
+        <div id="accountsManage"></div>
+      </div>
+      <!-- Cookies -->
       <div class="card full">
-        <h2>Live Logs <span class="badge-count" id="logCount">0</span></h2>
-        <div id="logsPanel" class="feed" style="max-height:350px;font-family:var(--font-data);font-size:11px"></div>
+        <h2>Cookie Sessions <button class="btn btn-sm primary" onclick="openModal('pasteCookies')">Paste Cookies</button></h2>
+        <div id="cookiesStatus"></div>
       </div>
     </div>
   </div>

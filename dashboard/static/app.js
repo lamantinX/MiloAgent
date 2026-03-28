@@ -224,12 +224,47 @@ function switchTab(name) {
   refresh();
 }
 
+function switchIntelSub(name) {
+  document.querySelectorAll('.intel-tab').forEach(t => t.classList.toggle('active', t.dataset.sub === name));
+  document.querySelectorAll('.intel-sub-content').forEach(c => c.classList.toggle('active', c.id === 'isub-' + name));
+  // Re-render D3 vizs when switching to their sub-tab (need correct dimensions)
+  if (name === 'radar' || name === 'network') setTimeout(() => refresh(), 100);
+}
+
 function toggleMobileMenu() {
   const navTabs = document.querySelector('.nav-tabs');
   const hamburger = document.querySelector('.hamburger');
   if (navTabs) navTabs.classList.toggle('open');
   if (hamburger) hamburger.classList.toggle('open');
 }
+
+// ══════════════════════════════════════════════════════════════
+// JOB LABELS — Human-readable names for scheduled jobs
+// ══════════════════════════════════════════════════════════════
+const JOB_LABELS = {
+  '_engage':'Engage Reddit','_act_on_best':'Act on Best Opps','_health_check':'Health Check',
+  '_scan_all':'Scan Subreddits','_seed_content':'Seed Content','_maintain_presence':'Maintain Presence',
+  '_verify_comments':'Verify Comments','_curate_and_share':'Curate & Share','_learn':'AI Learning',
+  '_analyze_subreddits':'Analyze Subreddits','_animate_hubs':'Animate Hubs','_research':'Deep Research',
+  '_build_relationships':'Build Relationships','_db_maintenance':'DB Maintenance',
+  '_manage_communities':'Manage Communities','_auto_improve':'Auto Improve',
+  '_scan_takeover_targets':'Scan Takeovers','_send_daily_report':'Daily Report',
+  '_send_weekly_report':'Weekly Report','start.<locals>.<lambda>':'Startup Task',
+};
+function humanJobName(name) {
+  for (const [key, label] of Object.entries(JOB_LABELS)) {
+    if (name.includes(key)) return label;
+  }
+  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ══════════════════════════════════════════════════════════════
+// FEED NOISE FILTER — Hide repetitive health check messages
+// ══════════════════════════════════════════════════════════════
+const NOISE_PATTERNS = [/^Cookie OK:/,/^Health check complete$/,/^Job ".*" executed successfully$/,/^Running job ".*"$/];
+let _showNoise = false;
+function isNoise(msg) { return NOISE_PATTERNS.some(p => p.test(msg)); }
+function toggleNoise() { _showNoise = document.getElementById('feedNoiseToggle')?.checked || false; }
 
 // ══════════════════════════════════════════════════════════════
 // API HELPERS
@@ -582,7 +617,7 @@ function _renderScheduleHTML(el, jobs) {
     const urgencyClass = isPaused ? '' : secs < 60 ? 'urgent' : secs < 300 ? 'soon' : 'normal';
     const cdClass = isPaused ? 'cd-paused' : secs < 60 ? 'cd-urgent' : secs < 300 ? 'cd-soon' : 'cd-normal';
     return `<div class="sched-row">
-      <span class="sched-name">${esc(j.name)}</span>
+      <span class="sched-name">${esc(humanJobName(j.name))}</span>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="countdown sched-countdown ${cdClass}">${fmtCD(secs)}</span>
         <span class="interval">${esc(intervalStr)}</span>
@@ -1284,16 +1319,16 @@ function connectWS() {
     if (panel) {
       const div = document.createElement('div');
       div.className = 'feed-item';
-      const levelColor = {ERROR:'var(--red)',WARNING:'var(--yellow)',INFO:'var(--neon-green)',DEBUG:'var(--text3)'}[rec.level]||'var(--text2)';
+      const levelColor = {ERROR:'var(--red)',WARNING:'var(--yellow)',INFO:'var(--green)',DEBUG:'var(--text3)'}[rec.level]||'var(--text2)';
       div.innerHTML = `<span class="time">${esc(rec.ts)}</span><span class="type" style="color:${levelColor}">${esc(rec.level)}</span><span class="msg">${esc(rec.msg)}</span>`;
       panel.appendChild(div);
       while (panel.children.length>200) panel.removeChild(panel.firstChild);
       panel.scrollTop = panel.scrollHeight;
     }
 
-    // Chat feed (activity tab) with color-coding + filtering
+    // Chat feed (liveops tab) with color-coding + filtering + noise suppression
     const chat = document.getElementById('chatFeed');
-    if (chat) {
+    if (chat && !(!_showNoise && isNoise(rec.msg || ''))) {
       const cm = document.createElement('div');
       cm.className = 'chat-msg';
       // Color-code by category
@@ -1759,14 +1794,14 @@ async function refresh() {
         renderSchedule(schedule.value, 'scheduleList');
         // Update global status bar with next action from schedule
         const nextJob = (schedule.value||[]).filter(j => j.seconds_until >= 0).sort((a,b) => a.seconds_until - b.seconds_until)[0];
-        if (nextJob) updateGlobalStatusBar({ nextAction: fmtCD(nextJob.seconds_until) + ' (' + nextJob.name + ')' });
+        if (nextJob) updateGlobalStatusBar({ nextAction: fmtCD(nextJob.seconds_until) + ' (' + humanJobName(nextJob.name) + ')' });
       }
       if (history.status==='fulfilled') renderTimeline(history.value);
       if (acctPerf.status==='fulfilled') renderRedditAcctPerf(acctPerf.value);
       if (heatmap.status==='fulfilled' && heatmap.value) renderHeatmap(heatmap.value);
       if (funnel.status==='fulfilled' && funnel.value) renderFunnel(funnel.value);
     }
-    else if (currentTab === 'activity') {
+    else if (currentTab === 'liveops') {
       const [actions, convos] = await Promise.allSettled([api('/api/actions?limit=50'), api('/api/conversations')]);
       if (actions.status==='fulfilled') renderActions(actions.value);
       if (convos.status==='fulfilled') renderConversations(convos.value);
@@ -1791,6 +1826,11 @@ async function refresh() {
       if (discoveries.status==='fulfilled') renderDiscoveriesList(discoveries.value);
       if (failures.status==='fulfilled') renderFailurePatterns(failures.value);
       if (sentiment.status==='fulfilled') renderSentimentMap(sentiment.value);
+      // Radar + Network (merged into intel tab)
+      const radarData = await api('/api/intel/radar').catch(()=>null);
+      if (radarData) renderRadar(radarData);
+      const networkData = await api('/api/network').catch(()=>null);
+      if (networkData) renderNetwork(networkData);
     }
     else if (currentTab === 'communities') {
       const [comms, targets, requests] = await Promise.allSettled([
@@ -1800,9 +1840,10 @@ async function refresh() {
       if (targets.status==='fulfilled') renderTakeoverTargets(targets.value.targets || targets.value);
       if (requests.status==='fulfilled') renderTakeoverRequests(requests.value.requests || requests.value);
     }
-    else if (currentTab === 'manage') {
-      const [projects, accounts, cookies] = await Promise.allSettled([
-        api('/api/projects'), api('/api/accounts'), api('/api/cookies')
+    else if (currentTab === 'config') {
+      const [projects, accounts, cookies, server, schedule] = await Promise.allSettled([
+        api('/api/projects'), api('/api/accounts'), api('/api/cookies'),
+        api('/api/server'), api('/api/schedule')
       ]);
       if (projects.status==='fulfilled') renderManageProjects(projects.value);
       if (accounts.status==='fulfilled') {
@@ -1811,14 +1852,11 @@ async function refresh() {
         if (mrAcc) mrAcc.textContent = accounts.value.filter(a=>a.platform!=='twitter').length;
       }
       if (cookies.status==='fulfilled') renderCookies(cookies.value);
-    }
-    else if (currentTab === 'server') {
-      const [server, schedule] = await Promise.allSettled([api('/api/server'), api('/api/schedule')]);
       if (server.status==='fulfilled') renderServer(server.value);
       if (schedule.status==='fulfilled') renderSchedule(schedule.value, 'scheduleListFull');
     }
     // Always fetch server stats for global status bar (lightweight)
-    if (currentTab !== 'server') {
+    if (currentTab !== 'config') {
       api('/api/server').then(sv => {
         if (sv && !sv.error) {
           const cpu = sv.cpu || {};
@@ -1827,14 +1865,6 @@ async function refresh() {
           updateTabBadges({ cpu: cpu.usage_pct||0 });
         }
       }).catch(() => {});
-    }
-    else if (currentTab === 'radar') {
-      const data = await api('/api/intel/radar').catch(()=>null);
-      if (data) renderRadar(data);
-    }
-    else if (currentTab === 'network') {
-      const data = await api('/api/network').catch(()=>null);
-      if (data) renderNetwork(data);
     }
   } catch(e) { console.error('Refresh error:', e); }
   _refreshing = false;

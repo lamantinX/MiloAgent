@@ -567,6 +567,18 @@ select.form-input{cursor:pointer}
   .controls-grid{grid-template-columns:1fr}
 }
 
+/* ── Intel Sub-tabs ── */
+.intel-tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.intel-tab{padding:5px 14px;border-radius:6px;font-size:11px;font-family:var(--font-label);font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text3);transition:all .2s var(--ease)}
+.intel-tab:hover{color:var(--text2);border-color:var(--border2)}
+.intel-tab.active{color:var(--accent);border-color:rgba(249,168,212,.2);background:var(--accent-subtle)}
+.intel-sub-content{display:none}
+.intel-sub-content.active{display:block;animation:fadeIn .3s var(--ease)}
+
+/* ── Feed Noise Toggle ── */
+.feed-noise-toggle{margin-left:8px;font-family:var(--font-data);font-size:10px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid var(--border);border-radius:4px}
+.feed-noise-toggle input{width:12px;height:12px;accent-color:var(--accent)}
+
 /* ── Reduced Motion ── */
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
