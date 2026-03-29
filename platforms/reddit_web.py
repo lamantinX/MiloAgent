@@ -22,6 +22,11 @@ from safety.captcha_solver import RedditCaptchaSolver
 
 logger = logging.getLogger(__name__)
 
+# Shared across ALL bot instances -- when one bot gets 403'd on a sub,
+# all other bots skip it too (avoids hammering Reddit from same IP)
+_BLOCKED_SUBS: Dict[str, float] = {}  # subreddit_lower -> unblock_timestamp
+_BLOCKED_SUBS_DURATION = 14400  # 4 hours (was 1h -- too aggressive for server IP)
+
 # Reddit JSON endpoints (public, no API key needed)
 REDDIT_BASE = "https://www.reddit.com"
 REDDIT_OLD = "https://old.reddit.com"
@@ -117,9 +122,6 @@ class RedditWebBot(BasePlatform):
 
         # Track subscribed subreddits to avoid re-subscribing every cycle
         self._subscribed_subs: set = set()
-
-        # Cache blocked subreddits (403/404) to avoid hammering them
-        self._blocked_subs: Dict[str, float] = {}  # sub -> unblock_timestamp
 
         # Subreddits that permanently reject posts (flair required, restricted, etc.)
         self._post_blacklist: set = set()
@@ -426,8 +428,8 @@ class RedditWebBot(BasePlatform):
         Uses self.session (with cookies) to avoid IP blocks on servers.
         Falls back to anonymous requests if session not available.
         """
-        # Skip subreddits that returned 403/404 recently (1 hour cooldown)
-        blocked_until = self._blocked_subs.get(subreddit.lower())
+        # Skip subreddits that returned 403/404 recently (shared across all bots)
+        blocked_until = _BLOCKED_SUBS.get(subreddit.lower())
         if blocked_until and time.time() < blocked_until:
             return []
 
@@ -470,16 +472,16 @@ class RedditWebBot(BasePlatform):
                     continue
 
                 if resp.status_code in (403, 404):
-                    # Block this sub for 1 hour to stop hammering
-                    self._blocked_subs[subreddit.lower()] = time.time() + 3600
+                    # Block this sub for 4h (shared across all bot instances)
+                    _BLOCKED_SUBS[subreddit.lower()] = time.time() + _BLOCKED_SUBS_DURATION
                     ct = resp.headers.get("Content-Type", "")
                     if "html" in ct.lower():
                         logger.warning(
                             f"Reddit blocked r/{subreddit} ({resp.status_code} HTML) — "
-                            f"skipping for 1h"
+                            f"skipping for 4h"
                         )
                     else:
-                        logger.debug(f"r/{subreddit} returned {resp.status_code}, skipping 1h")
+                        logger.debug(f"r/{subreddit} returned {resp.status_code}, skipping 4h")
                     return []
 
                 logger.warning(f"Reddit search returned {resp.status_code}")

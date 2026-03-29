@@ -258,6 +258,12 @@ class AccountManager:
 
                 available.append(acc)
 
+            # Skip accounts without cookie files (can't authenticate)
+            if platform == "reddit":
+                with_cookies = [a for a in available if os.path.exists(a.get("cookies_file", ""))]
+                if with_cookies:
+                    available = with_cookies
+
             if not available:
                 logger.warning(f"No available {platform} accounts")
                 return None
