@@ -121,6 +121,9 @@ class RedditWebBot(BasePlatform):
         # Cache blocked subreddits (403/404) to avoid hammering them
         self._blocked_subs: Dict[str, float] = {}  # sub -> unblock_timestamp
 
+        # Subreddits that permanently reject posts (flair required, restricted, etc.)
+        self._post_blacklist: set = set()
+
         # Load cookies if they exist
         self._load_cookies()
 
@@ -324,7 +327,7 @@ class RedditWebBot(BasePlatform):
                     except Exception as e:
                         logger.debug(f"Browse r/{sub_name}/{sort} fallback failed: {e}")
 
-            time.sleep(random.uniform(3.0, 6.0))
+            time.sleep(random.uniform(8.0, 15.0))  # Longer delays
 
         opportunities.sort(
             key=lambda x: x["relevance_score"], reverse=True
@@ -544,9 +547,39 @@ class RedditWebBot(BasePlatform):
             return int(m.group(1)) * 60
         return 10  # Safe fallback
 
+    def _fetch_thread_comments(self, post_id: str, subreddit: str, limit: int = 8) -> list:
+        """Fetch top-level comments from a Reddit thread for context awareness.
+        Returns list of dicts with 'author' and 'body' (truncated).
+        This prevents us from repeating what others already said."""
+        try:
+            url = f"{REDDIT_BASE}/r/{subreddit}/comments/{post_id}.json"
+            params = {"limit": limit, "sort": "best", "depth": 1}
+            resp = self.session.get(url, params=params, headers={"Accept": "application/json"}, timeout=8)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if not isinstance(data, list) or len(data) < 2:
+                return []
+            comments = []
+            for child in data[1].get("data", {}).get("children", []):
+                if child.get("kind") != "t1":
+                    continue
+                c = child.get("data", {})
+                body = (c.get("body") or "")[:200]
+                author = c.get("author", "[deleted]")
+                if author in ("[deleted]", "AutoModerator"):
+                    continue
+                if body:
+                    comments.append({"author": author, "body": body})
+                if len(comments) >= limit:
+                    break
+            return comments
+        except Exception as e:
+            logger.debug(f"Failed to fetch thread comments: {e}")
+            return []
+
     def act(self, opportunity: Dict, project: Dict, hub_reference: str = "",
             research_context: str = "", failure_rules: str = "") -> bool:
-        """Generate, validate, and post a comment."""
         project_name = project.get("project", {}).get("name", "unknown")
 
         # Rate limit guard: don't even try if we're still cooling down
@@ -591,6 +624,31 @@ class RedditWebBot(BasePlatform):
                 project=project_name,
                 stage=stage,
             )
+            # Fetch this account's recent comments for dedup awareness
+            recent_own_comments = []
+            try:
+                recent_own_comments = self.db.get_recent_comments_by_account(
+                    account=self._username,
+                    subreddit=opportunity.get("subreddit", ""),
+                    hours=72, limit=5,
+                )
+            except Exception:
+                pass
+
+            # Set current account for per-account writing style
+            self.content_gen._current_account = self._username
+            self.content_gen._recent_own_comments = recent_own_comments
+
+            # Fetch existing thread comments for context awareness
+            thread_comments = []
+            post_id = opportunity.get("target_id", "")
+            if post_id:
+                thread_comments = self._fetch_thread_comments(
+                    post_id, opportunity.get("subreddit", ""), limit=6
+                )
+                if thread_comments:
+                    logger.info(f"Thread context: {len(thread_comments)} existing comments fetched for {post_id}")
+
             comment_text = self.content_gen.generate_reddit_comment(
                 post_title=opportunity["title"],
                 post_body=opportunity.get("body", ""),
@@ -600,7 +658,7 @@ class RedditWebBot(BasePlatform):
                 hub_reference=hub_reference or None,
                 research_context=research_context or None,
                 failure_rules=failure_rules or None,
-                account={"username": self._username, "persona": self.account_config.get("persona", "helpful_casual")},
+                thread_comments=thread_comments,
             )
 
             # Content validation
@@ -770,6 +828,17 @@ class RedditWebBot(BasePlatform):
 
             # Success — reset circuit breaker
             self._consecutive_failures = 0
+
+            # Store comment in conversation memory for dedup and history
+            try:
+                self.db.log_comment_content(
+                    account=self._username,
+                    subreddit=opportunity.get("subreddit", ""),
+                    post_id=opportunity.get("target_id", ""),
+                    comment_text=comment_text,
+                )
+            except Exception:
+                pass  # Non-critical
             self._circuit_breaker_opened_at = None
 
             things = (
@@ -869,6 +938,77 @@ class RedditWebBot(BasePlatform):
         except Exception as e:
             logger.debug(f"Validation error (continuing anyway): {e}")
             return content
+
+    def check_cookie_validity(self) -> dict:
+        """Check if the current session cookies are still valid.
+        Returns dict with 'valid': bool, 'username': str, 'karma': int."""
+        try:
+            resp = self.session.get(
+                f"{REDDIT_OLD}/api/me.json",
+                headers={"Accept": "application/json"},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return {"valid": False, "reason": f"HTTP {resp.status_code}"}
+            data = resp.json().get("data", {})
+            if not data or not data.get("name"):
+                return {"valid": False, "reason": "No user data in response"}
+            return {
+                "valid": True,
+                "username": data.get("name", ""),
+                "karma": (data.get("link_karma", 0) or 0) + (data.get("comment_karma", 0) or 0),
+                "has_mail": data.get("has_mail", False),
+            }
+        except Exception as e:
+            return {"valid": False, "reason": str(e)}
+
+    def check_shadowban(self) -> dict:
+        """Check if this account is shadowbanned or suspended.
+        Returns dict with 'status': 'ok', 'shadowbanned', 'suspended', or 'error'."""
+        try:
+            # Check user profile accessibility
+            resp = self.session.get(
+                f"{REDDIT_OLD}/user/{self._username}/about.json",
+                headers={"Accept": "application/json"},
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                logger.warning(f"Account {self._username} returns 404 -- likely shadowbanned or suspended")
+                return {"status": "shadowbanned", "detail": "Profile returns 404"}
+            if resp.status_code == 403:
+                logger.warning(f"Account {self._username} returns 403 -- likely suspended")
+                return {"status": "suspended", "detail": "Profile returns 403"}
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                if data.get("is_suspended"):
+                    return {"status": "suspended", "detail": "Account flagged as suspended"}
+                # Check if posts are visible
+                karma = data.get("link_karma", 0) + data.get("comment_karma", 0)
+                return {"status": "ok", "karma": karma}
+            return {"status": "error", "detail": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"status": "error", "detail": str(e)}
+
+    def verify_comment_posted(self, post_id: str, comment_text: str) -> bool:
+        """Verify our comment actually appears in the thread (not silently removed)."""
+        try:
+            import time as _time
+            _time.sleep(3)  # Wait for Reddit to propagate
+            url = f"https://www.reddit.com/r/all/comments/{post_id}.json"
+            resp = self.session.get(url, headers={"Accept": "application/json"}, timeout=10)
+            if resp.status_code != 200:
+                return True  # Can't verify, assume ok
+            data = resp.json()
+            if isinstance(data, list) and len(data) >= 2:
+                for child in data[1].get("data", {}).get("children", []):
+                    c = child.get("data", {})
+                    if c.get("author") == self._username:
+                        return True
+            logger.warning(f"Comment by {self._username} on {post_id} not visible -- possible silent removal")
+            return False
+        except Exception:
+            return True  # Can't verify, assume ok
+
 
     def _human_reading_delay(
         self, post_title: str, post_body: str, comment_text: str
@@ -1000,6 +1140,10 @@ class RedditWebBot(BasePlatform):
         project: Dict,
     ) -> Optional[str]:
         """Create a new post in a subreddit. Returns post URL or None."""
+        if subreddit.lower() in self._post_blacklist:
+            logger.debug(f"r/{subreddit} is blacklisted for posts (flair/restricted), skipping")
+            return None
+
         if not self._ensure_auth():
             logger.error("Cannot create post: not authenticated")
             return None
@@ -1077,6 +1221,19 @@ class RedditWebBot(BasePlatform):
                                 pass
                     logger.warning(f"CAPTCHA required for {self._username} — cooldown 2h")
                     self._ratelimit_until = time.time() + 120 * 60
+                    return None
+                # Subreddit permanently rejects our posts — blacklist it
+                if "SUBMIT_VALIDATION_FLAIR_REQUIRED" in error_codes:
+                    logger.warning(f"r/{subreddit} requires flair — blacklisting for posts")
+                    self._post_blacklist.add(subreddit.lower())
+                    return None
+                if "SUBREDDIT_NOTALLOWED" in error_codes or "NOT_WHITELISTED_BY_USER_MESSAGE" in error_codes:
+                    logger.warning(f"r/{subreddit} does not allow our posts — blacklisting")
+                    self._post_blacklist.add(subreddit.lower())
+                    return None
+                if "NO_SELFS" in error_codes:
+                    logger.warning(f"r/{subreddit} only allows link posts — blacklisting text posts")
+                    self._post_blacklist.add(subreddit.lower())
                     return None
                 logger.error(f"Post creation error: {errors}")
                 return None
@@ -1336,7 +1493,7 @@ class RedditWebBot(BasePlatform):
             all_subs = []
 
         # Subscribe to target subreddits (skip already-subscribed, max 3 per cycle)
-        max_subs_per_cycle = 3
+        max_subs_per_cycle = 1  # Reduced to avoid IP-level CAPTCHA
         new_subs = [s for s in all_subs if s.lower() not in self._subscribed_subs]
         if not new_subs:
             logger.debug(f"Already subscribed to all {len(all_subs)} target subs")
@@ -1347,37 +1504,37 @@ class RedditWebBot(BasePlatform):
                 try:
                     if self.subscribe(sub_name):
                         stats["subscribed"] += 1
-                    time.sleep(random.uniform(3.0, 8.0))
+                    time.sleep(random.uniform(8.0, 15.0))  # Longer delays
                 except Exception:
                     pass
 
         # Upvote a few hot posts in target subs (look natural, max 2 subs)
-        subs_to_browse = random.sample(all_subs, min(2, len(all_subs)))
+        subs_to_browse = random.sample(all_subs, min(1, len(all_subs)))  # 1 sub only
         for sub_name in subs_to_browse:
             try:
                 posts = self._browse_subreddit(sub_name, "hot", limit=5)
                 # Upvote 1-2 random posts (conservative to avoid CAPTCHA)
-                to_upvote = random.sample(posts, min(random.randint(1, 2), len(posts)))
+                to_upvote = random.sample(posts, min(1, len(posts)))  # 1 upvote max
                 for post in to_upvote:
                     fullname = post.get("name", "")
                     if fullname and self.upvote(fullname):
                         stats["upvoted"] += 1
-                    time.sleep(random.uniform(2.0, 5.0))
+                    time.sleep(random.uniform(5.0, 12.0))  # Longer delays
             except Exception:
                 pass
-            time.sleep(random.uniform(3.0, 6.0))
+            time.sleep(random.uniform(8.0, 15.0))  # Longer delays
 
         # Save 1-2 interesting posts
         try:
             posts = self._browse_subreddit(
                 random.choice(all_subs) if all_subs else "popular", "hot", limit=10
             )
-            to_save = random.sample(posts, min(2, len(posts)))
+            to_save = random.sample(posts, min(1, len(posts)))  # 1 save max
             for post in to_save:
                 fullname = post.get("name", "")
                 if fullname and self.save_item(fullname):
                     stats["saved"] += 1
-                time.sleep(random.uniform(1.0, 3.0))
+                time.sleep(random.uniform(5.0, 10.0))  # Longer delays
         except Exception:
             pass
 

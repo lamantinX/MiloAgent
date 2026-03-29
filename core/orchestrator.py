@@ -54,9 +54,10 @@ from safety.ban_detector import BanDetector
 logger = logging.getLogger(__name__)
 
 # ── Hard Safety Limits ────────────────────────────────────────────
-MAX_SUBREDDITS_PER_SCAN = 5     # Never scan more than 5 subs per cycle (8 projects x ~130s/project = ~1040s < 1200s timeout)
+MAX_SUBREDDITS_PER_SCAN = 5     # Per project per cycle (round-robin)
 MAX_KEYWORDS_PER_SUBREDDIT = 8  # Never search more than 8 keywords per sub
-SCAN_TIMEOUT_SECONDS = 1200     # Hard timeout for entire scan (8 projects, conservative delays)
+SCAN_TIMEOUT_SECONDS = 400      # Parallel scans: 8 projects run concurrently ~3min max
+SCAN_MAX_WORKERS = 4            # Max concurrent project scans (avoids Reddit rate limit burst)
 ACT_TIMEOUT_SECONDS = 150       # Hard timeout for action operations (Reddit needs 60-90s)
 LLM_TIMEOUT_SECONDS = 45        # Hard timeout for LLM calls
 
@@ -712,8 +713,12 @@ class Orchestrator:
             self._scan_running = False
 
     def __scan_all_inner(self):
-        """Inner scan logic — always called with _scan_running=True."""
-        # Skip if system is heavily throttled
+        """Inner scan logic — always called with _scan_running=True.
+
+        Projects are scanned in parallel (SCAN_MAX_WORKERS concurrent threads).
+        Each project gets its own Reddit bot instance to avoid session conflicts.
+        Twitter/Telegram remain sequential (disabled/rare).
+        """
         throttle = self.resource_monitor.throttle_factor
         if throttle >= 5.0:
             logger.info("System resources critical, skipping scan")
@@ -721,107 +726,37 @@ class Orchestrator:
 
         logger.info("Starting scan cycle...")
 
-        # Per-cycle skip flags — disable broken platforms without breaking scan loop
-        _skip_twitter = True   # Twitter disabled: server IP blocked (code 226)
-        _skip_telegram = False
-
-        for project in self.projects:
+        def _scan_one_project(project: dict) -> None:
+            """Scan a single project — runs in a thread pool worker."""
             proj_name = project.get("project", {}).get("name", "unknown")
+            try:
+                if not self._check_resources():
+                    logger.debug(f"Scan {proj_name}: resources low, skipping")
+                    return
+                scan_project = self._expand_project_targets(project)
+                scan_project = self._limit_scan_targets(scan_project)
+                account = self.account_mgr.get_next_account("reddit", project=proj_name)
+                if not account:
+                    logger.debug(f"Scan {proj_name}: no account available")
+                    return
+                bot = self._get_reddit_bot(account)
+                opps = bot.scan(scan_project)
+                logger.info(f"Reddit scan for {proj_name}: {len(opps)} opportunities")
+            except Exception as e:
+                logger.error(f"Reddit scan error for {proj_name}: {e}")
 
-            # Inject expanded targets from learning
-            scan_project = self._expand_project_targets(project)
-
-            # SAFETY: Limit subreddits per scan via round-robin
-            scan_project = self._limit_scan_targets(scan_project)
-
-            # Scan Reddit
-            account = self.account_mgr.get_next_account("reddit")
-            if account:
+        # Run all project scans in parallel — 4× faster than sequential
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=SCAN_MAX_WORKERS,
+            thread_name_prefix="scan",
+        ) as pool:
+            futures = {pool.submit(_scan_one_project, p): p for p in self.projects}
+            for fut in concurrent.futures.as_completed(futures):
                 try:
-                    # Resource check before scan
-                    if not self._check_resources():
-                        logger.info("Aborting scan: resources low")
-                        return
-
-                    bot = self._get_reddit_bot(account)
-                    opps = bot.scan(scan_project)
-                    logger.info(
-                        f"Reddit scan for {proj_name}: "
-                        f"{len(opps)} opportunities"
-                    )
+                    fut.result()
                 except Exception as e:
-                    logger.error(f"Reddit scan error for {proj_name}: {e}")
-
-            # Scan Twitter (only if resources allow and not blocked)
-            if self._check_resources() and not _skip_twitter:
-                account = self.account_mgr.get_next_account("twitter")
-                if account:
-                    try:
-                        bot = self._get_twitter_bot(account)
-                        opps = bot.scan(scan_project)
-                        logger.info(
-                            f"Twitter scan for {proj_name}: "
-                            f"{len(opps)} opportunities"
-                        )
-                    except Exception as e:
-                        err_str = str(e)
-                        # Cloudflare block — log once, disable for this cycle
-                        if "blocked" in err_str.lower() or "403" in err_str[:10]:
-                            if not getattr(self, "_twitter_blocked_warned", False):
-                                logger.warning(
-                                    "Twitter blocked by Cloudflare — server IP banned. "
-                                    "Set http.twitter_proxy in settings.yaml"
-                                )
-                                self._twitter_blocked_warned = True
-                            _skip_twitter = True
-                        else:
-                            logger.error(f"Twitter scan error for {proj_name}: {e}")
-
-            # Scan Telegram groups (only if project has telegram config and not disabled)
-            if self._check_resources() and not _skip_telegram:
-                tg_config = project.get("telegram", {})
-                if tg_config.get("enabled", False):
-                    account = self.account_mgr.get_next_account("telegram")
-                    if account:
-                        try:
-                            bot = self._get_telegram_group_bot(account)
-
-                            # Auto-discover and join new groups (once per day)
-                            if tg_config.get("auto_discover", False):
-                                last_discover = getattr(self, "_tg_last_discover", {})
-                                last_time = last_discover.get(proj_name, 0)
-                                if time.time() - last_time > 86400:  # 24h
-                                    try:
-                                        stats = bot.discover_and_join(project)
-                                        if not hasattr(self, "_tg_last_discover"):
-                                            self._tg_last_discover = {}
-                                        self._tg_last_discover[proj_name] = time.time()
-                                        if stats.get("joined", 0) > 0:
-                                            logger.info(
-                                                f"Telegram auto-discovery for {proj_name}: "
-                                                f"discovered={stats['discovered']}, joined={stats['joined']}"
-                                            )
-                                    except Exception as e:
-                                        logger.debug(f"Telegram discovery error: {e}")
-
-                            opps = bot.scan(project)
-                            logger.info(
-                                f"Telegram scan for {proj_name}: "
-                                f"{len(opps)} opportunities"
-                            )
-                        except RuntimeError as e:
-                            if "not authorized" in str(e).lower():
-                                if not getattr(self, "_tg_auth_warned", False):
-                                    logger.warning(
-                                        "Telegram session not authorized — "
-                                        "run: python miloagent.py login telegram"
-                                    )
-                                    self._tg_auth_warned = True
-                                _skip_telegram = True
-                            else:
-                                logger.error(f"Telegram scan error for {proj_name}: {e}")
-                        except Exception as e:
-                            logger.error(f"Telegram scan error for {proj_name}: {e}")
+                    proj = futures[fut].get("project", {}).get("name", "?")
+                    logger.error(f"Scan worker crash for {proj}: {e}")
 
         # Notify Telegram (one message per cycle)
         total_opps = self.db.get_pending_opportunities(limit=100)
