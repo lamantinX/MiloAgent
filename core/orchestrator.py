@@ -1399,8 +1399,12 @@ class Orchestrator:
                 break
 
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit")
+            account = self.account_mgr.get_next_account("reddit", project=proj_name)
             if not account:
+                continue
+
+            # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
+            if not self.account_mgr.can_post(account["username"]):
                 continue
 
             allowed, reason = self.rate_limiter.can_act(
@@ -1890,8 +1894,13 @@ class Orchestrator:
             return
 
         for project in self.projects:
-            account = self.account_mgr.get_next_account("reddit")
+            proj_name = project.get("project", {}).get("name", "unknown")
+            account = self.account_mgr.get_next_account("reddit", project=proj_name)
             if not account:
+                continue
+
+            # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
+            if not self.account_mgr.can_post(account["username"]):
                 continue
 
             # New strategy: smart decision based on stage, limits, and post type
