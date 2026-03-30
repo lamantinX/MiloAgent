@@ -74,7 +74,6 @@ Thumbs.db
 backups/
 
 # ── Docker ────────────────────────────────────────────────
-.dockerignore
 
 # ── Test artifacts ────────────────────────────────────────
 .pytest_cache/

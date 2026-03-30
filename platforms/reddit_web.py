@@ -7,9 +7,11 @@ This is the fallback when the user doesn't have API credentials (PRAW).
 import json
 import os
 import re
+import tempfile
 import time
 import random
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Shared across ALL bot instances -- when one bot gets 403'd on a sub,
 # all other bots skip it too (avoids hammering Reddit from same IP)
 _BLOCKED_SUBS: Dict[str, float] = {}  # subreddit_lower -> unblock_timestamp
+_BLOCKED_SUBS_LOCK = threading.Lock()
 _BLOCKED_SUBS_DURATION = 14400  # 4 hours (was 1h -- too aggressive for server IP)
 
 # Reddit JSON endpoints (public, no API key needed)
@@ -144,11 +147,20 @@ class RedditWebBot(BasePlatform):
                 logger.warning(f"Failed to load Reddit cookies: {e}")
 
     def _save_cookies(self):
-        """Save session cookies to file."""
-        os.makedirs(os.path.dirname(self._cookies_file), exist_ok=True)
+        """Save session cookies to file (atomic write to prevent corruption)."""
+        cookie_dir = os.path.dirname(self._cookies_file)
+        os.makedirs(cookie_dir, exist_ok=True)
         cookies = dict(self.session.cookies)
-        with open(self._cookies_file, "w") as f:
-            json.dump(cookies, f)
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=cookie_dir, suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                json.dump(cookies, f)
+            os.replace(tmp_path, self._cookies_file)  # Atomic on Unix
+        except Exception as e:
+            logger.warning(f"Cookie save failed: {e}")
+            # Fallback: direct write
+            with open(self._cookies_file, "w") as f:
+                json.dump(cookies, f)
         logger.debug(f"Saved Reddit cookies to {self._cookies_file}")
 
     def _login(self) -> bool:
@@ -429,7 +441,8 @@ class RedditWebBot(BasePlatform):
         Falls back to anonymous requests if session not available.
         """
         # Skip subreddits that returned 403/404 recently (shared across all bots)
-        blocked_until = _BLOCKED_SUBS.get(subreddit.lower())
+        with _BLOCKED_SUBS_LOCK:
+            blocked_until = _BLOCKED_SUBS.get(subreddit.lower())
         if blocked_until and time.time() < blocked_until:
             return []
 
@@ -473,7 +486,8 @@ class RedditWebBot(BasePlatform):
 
                 if resp.status_code in (403, 404):
                     # Block this sub for 4h (shared across all bot instances)
-                    _BLOCKED_SUBS[subreddit.lower()] = time.time() + _BLOCKED_SUBS_DURATION
+                    with _BLOCKED_SUBS_LOCK:
+                        _BLOCKED_SUBS[subreddit.lower()] = time.time() + _BLOCKED_SUBS_DURATION
                     ct = resp.headers.get("Content-Type", "")
                     if "html" in ct.lower():
                         logger.warning(

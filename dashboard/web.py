@@ -252,10 +252,16 @@ class ProjectUpdate(BaseModel):
 class AccountCreate(BaseModel):
     platform: Literal["reddit", "telegram"]
     username: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=1)
-    email: str = ""
-    persona: str = "helpful_casual"
-    projects: list = []
+    password: str = Field(..., min_length=1, max_length=256)
+    email: str = Field("", max_length=200)
+    persona: str = Field("helpful_casual", max_length=50)
+    projects: List[str] = []
+
+
+class PasteCookiesRequest(BaseModel):
+    platform: Literal["reddit", "telegram"]
+    username: str = Field(..., min_length=1, max_length=100)
+    cookies: str = Field(..., min_length=10, max_length=50000)
 
 
 # ── WebDashboard V2 ─────────────────────────────────────────────
@@ -294,15 +300,16 @@ class WebDashboard:
         self._user = os.environ.get("MILO_WEB_USER", "") or "admin"
         raw_pass = os.environ.get("MILO_WEB_PASS", "") or self.orch.settings.get("web_dashboard", {}).get("password", "")
         if not raw_pass:
-            # Fallback to legacy token
             raw_pass = os.environ.get("MILO_WEB_TOKEN", "") or self.orch.settings.get("web_dashboard", {}).get("token", "")
-        if not raw_pass or raw_pass == "milo":
+        if not raw_pass or len(raw_pass) < 6:
             logger.critical(
-                "MILO_WEB_PASS not set or using weak default! "
-                "Set a strong password via MILO_WEB_PASS env var or config/settings.yaml"
+                "MILO_WEB_PASS not set or too weak (min 6 chars)! "
+                "Set via MILO_WEB_PASS env var or config/settings.yaml web_dashboard.password"
             )
-            if not raw_pass:
-                raw_pass = "milo"  # Keep running but warn loudly
+            # Generate a random password so dashboard isn't open
+            raw_pass = secrets.token_hex(16)
+            logger.critical(f"Auto-generated dashboard password: {raw_pass}")
+            logger.critical("Set MILO_WEB_PASS to use a permanent password")
 
         # Hash password at startup (timing-safe comparison on login)
         if _pwd_ctx:
@@ -395,10 +402,6 @@ class WebDashboard:
     def _validate_session(self, token: str) -> bool:
         session = self._sessions.get(token)
         if not session:
-            # Fallback: check legacy token (MILO_WEB_TOKEN)
-            legacy = os.environ.get("MILO_WEB_TOKEN", "")
-            if legacy and token == legacy:
-                return True
             return False
         if time.time() - session["created_at"] > self._session_ttl:
             del self._sessions[token]
@@ -764,7 +767,7 @@ class WebDashboard:
             """Generate the Reddit authorization URL for a given account username."""
             cfg = _load_reddit_api_config()
             client_id = cfg.get("client_id", "")
-            redirect_uri = cfg.get("redirect_uri", "https://your-domain.com/api/reddit/oauth/callback")
+            redirect_uri = cfg.get("redirect_uri", "https://milo.soclose.co/api/reddit/oauth/callback")
             if not client_id:
                 return {"ok": False, "error": "Reddit API not configured (config/reddit_api.local.yaml missing client_id)"}
 
@@ -803,7 +806,7 @@ class WebDashboard:
             cfg = _load_reddit_api_config()
             client_id = cfg.get("client_id", "")
             client_secret = cfg.get("client_secret", "")
-            redirect_uri = cfg.get("redirect_uri", "https://your-domain.com/api/reddit/oauth/callback")
+            redirect_uri = cfg.get("redirect_uri", "https://milo.soclose.co/api/reddit/oauth/callback")
 
             if not client_id or not client_secret:
                 return {"ok": False, "error": "Reddit API credentials not configured on server"}
@@ -1569,13 +1572,11 @@ h1{{color:#ff6b35}}p{{color:#a0a0c0}}</style></head>
 
         # ── POST /api/cookies/paste — paste cookies from browser ─
         @app.post("/api/cookies/paste")
-        async def paste_cookies(body: dict, _=Depends(self._verify_token)):
+        async def paste_cookies(body: PasteCookiesRequest, _=Depends(self._verify_token)):
             """Paste cookies from browser console (document.cookie output)."""
-            platform = body.get("platform", "")
-            username = body.get("username", "")
-            raw_cookies = body.get("cookies", "")
-            if not platform or not username or not raw_cookies:
-                raise HTTPException(status_code=400, detail="platform, username and cookies required")
+            platform = body.platform
+            username = body.username
+            raw_cookies = body.cookies
             # Find account
             accounts = self.orch.account_mgr.load_accounts(platform)
             target = None

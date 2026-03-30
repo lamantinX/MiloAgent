@@ -623,7 +623,7 @@ class Orchestrator:
                 except Exception:
                     pass
 
-        # Disconnect Telegram group bots (2s timeout — don't let this block shutdown)
+        # Disconnect Telegram group bots (2s timeout -- don't let this block shutdown)
         for bot in self._telegram_group_bots.values():
             try:
                 from platforms.telegram_group_bot import _run_tg_async
@@ -631,7 +631,20 @@ class Orchestrator:
             except Exception:
                 pass
 
+        # Close all bot sessions before clearing (prevents connection leaks)
+        for bot in self._reddit_bots.values():
+            try:
+                if hasattr(bot, "close"):
+                    bot.close()
+            except Exception:
+                pass
         self._reddit_bots.clear()
+        for bot in self._twitter_bots.values():
+            try:
+                if hasattr(bot, "close"):
+                    bot.close()
+            except Exception:
+                pass
         self._twitter_bots.clear()
         self._telegram_group_bots.clear()
 
