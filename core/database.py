@@ -722,6 +722,9 @@ class Database:
             (account, subreddit, reason),
         )
 
+    # Alias for convenience (used by reddit_web.py)
+    ban_account_from_sub = record_subreddit_ban
+
     def get_subreddit_risk(self, subreddit: str) -> dict:
         """Get risk profile for a subreddit."""
         row = self.conn.execute(
