@@ -687,7 +687,12 @@ class TelegramGroupBot(BasePlatform):
     def _validate_content(
         self, content: str, project: Dict
     ) -> Optional[str]:
-        """Validate generated content before sending."""
+        """Validate generated content before sending.
+
+        Returns the content only if the validator accepts it (is_valid), and
+        returns None otherwise — including on unexpected validator failures, so
+        an invalid or un-checkable message is never sent.
+        """
         try:
             from core.content_validator import ContentValidator
             validator = ContentValidator()
@@ -699,11 +704,11 @@ class TelegramGroupBot(BasePlatform):
             logger.info(
                 f"Telegram validation: score={score:.2f}, issues={issues}"
             )
-            if score >= 0.4:
-                return content
             return None
         except Exception:
-            return content
+            # Fail closed: never send content that could not be validated.
+            logger.exception("Telegram validation error; skipping message")
+            return None
 
     def _human_delay(self, original_text: str, reply_text: str) -> float:
         """Calculate human-like delay for reading + typing in Telegram.

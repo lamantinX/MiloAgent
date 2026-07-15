@@ -709,7 +709,12 @@ class TwitterBot(BasePlatform):
     def _validate_and_retry(
         self, content: str, project: Dict, platform: str = "twitter"
     ) -> Optional[str]:
-        """Validate content and retry once if invalid."""
+        """Validate content and retry once if invalid.
+
+        Returns the content only if the validator accepts it (is_valid), and
+        returns None otherwise — including on unexpected validator failures, so
+        invalid or un-checkable content is never posted.
+        """
         try:
             from core.content_validator import ContentValidator
             validator = ContentValidator()
@@ -720,12 +725,11 @@ class TwitterBot(BasePlatform):
                 return content
 
             logger.info(f"Twitter validation failed (score={score:.2f}): {issues}")
-            if score >= 0.4:
-                return content
             return None
-        except Exception as e:
-            logger.debug(f"Validation error (continuing anyway): {e}")
-            return content
+        except Exception:
+            # Fail closed: never post content that could not be validated.
+            logger.exception("Twitter validation error; skipping reply")
+            return None
 
     async def _act_async(self, opportunity: Dict, project: Dict) -> bool:
         """Generate reply and post it."""

@@ -931,7 +931,12 @@ class RedditWebBot(BasePlatform):
         project: Dict,
         is_promo: bool,
     ) -> Optional[str]:
-        """Validate content and retry once if invalid."""
+        """Validate content and retry once if invalid.
+
+        Returns the content only if it passes validation (possibly after one
+        regeneration), and returns None otherwise — including on unexpected
+        validator failures, so invalid or un-checkable content is never posted.
+        """
         try:
             from core.content_validator import ContentValidator
             validator = ContentValidator()
@@ -971,9 +976,10 @@ class RedditWebBot(BasePlatform):
             )
             return None  # Never post content that fails validation twice
 
-        except Exception as e:
-            logger.debug(f"Validation error (continuing anyway): {e}")
-            return content
+        except Exception:
+            # Fail closed: never post content that could not be validated.
+            logger.exception("Reddit validation error; skipping comment")
+            return None
 
     def check_cookie_validity(self) -> dict:
         """Check if the current session cookies are still valid.

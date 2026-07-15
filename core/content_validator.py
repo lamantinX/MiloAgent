@@ -21,6 +21,11 @@ class ContentValidator:
     7. Organic mode enforcement (no product/URL leakage)
     """
 
+    # Minimum clamped score required to accept content. This is the single
+    # source of truth for is_valid; platform adapters must not reinterpret
+    # scores with their own threshold.
+    ACCEPTANCE_THRESHOLD = 0.6
+
     # Pre-compiled regex patterns for bot detection (compiled once at class load)
     BOT_PATTERNS = [
         # ── Generic openers (instant bot tell) ──
@@ -90,16 +95,23 @@ class ContentValidator:
         """Validate content against business profile.
 
         Returns:
-        # Reject empty or trivially short comments
-        if not content or len(content.strip()) < 15:
-            return {"valid": False, "score": 0, "issues": ["empty_or_trivial: comment too short (<15 chars)"]}
-
             (is_valid, score, issues)
             - is_valid: True if content passes all critical checks
-            - score: 0.0-1.0 quality score
+            - score: 0.0-1.0 quality score (clamped)
             - issues: list of issue descriptions
         """
+        # Reject empty or trivially short comments. Return the same 3-tuple
+        # shape as the rest of this method so adapters can always unpack it.
+        if not content or len(content.strip()) < 15:
+            return False, 0.0, ["empty_or_trivial: comment too short (<15 chars)"]
+
         issues = []
+
+        # Initialize score before ANY check so the order of deductions can
+        # never change the result. Every penalty below starts from 1.0.
+        score = 1.0
+        proj = project.get("project", project)
+        profile = proj.get("business_profile", {})
 
         # Block RSS link spam
         rss_spam_patterns = [
@@ -113,10 +125,6 @@ class ContentValidator:
                 issues.append(f"RSS spam pattern: '{rp}'")
                 score -= 0.5
                 break
-
-        score = 1.0
-        proj = project.get("project", project)
-        profile = proj.get("business_profile", {})
 
         # Check 1: Product name accuracy
         name_issues = self._check_product_name(content, proj)
@@ -155,8 +163,12 @@ class ContentValidator:
             issues.extend(organic_issues)
             score -= len(organic_issues) * 0.3
 
+        # Clamp once, immediately before computing is_valid, so deductions
+        # can never push the score below 0.0 or above 1.0.
         score = max(0.0, min(1.0, score))
-        is_valid = score >= 0.6 and not any("CRITICAL" in i for i in issues)
+        is_valid = score >= self.ACCEPTANCE_THRESHOLD and not any(
+            "CRITICAL" in i for i in issues
+        )
 
         if issues:
             logger.info(
