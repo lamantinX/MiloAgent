@@ -1,0 +1,20 @@
+# =============================================================================
+# Example Business Configuration — MiloAgent
+# =============================================================================
+# A "business" is the owning entity for one or more products. Products live in
+# projects/*.yaml and reference a business via `business_id`.
+#
+# This file is a SAFE template (no real data). Copy it, rename it, and edit:
+#   cp businesses/example_business.yaml businesses/my_company.yaml
+#
+# business_id rules:
+#   - lowercase slugs matching ^[a-z0-9][a-z0-9_-]{1,63}$
+#   - immutable: once a business_id exists in tenant data it must never change
+#   - referenced from products via project.business_id
+# =============================================================================
+
+business:
+  id: "example_corp"                # immutable lowercase slug
+  name: "Example Corp"             # human-readable display name (may change)
+  description: "Template business configuration — replace with your own."
+  enabled: false                    # template only — copy and enable

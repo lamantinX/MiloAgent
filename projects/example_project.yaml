@@ -13,6 +13,10 @@
 # =============================================================================
 
 project:
+  # id: immutable lowercase slug ^[a-z0-9][a-z0-9_-]{1,63}$ — referenced by tenant data.
+  # business_id: the owning business from businesses/*.yaml. Required once migrated.
+  id: "my_product"
+  business_id: "example_corp"
   name: "MyProduct"
   url: "https://myproduct.com"
   type: "SaaS"                              # SaaS | App | Tool | Service | Community
