@@ -28,6 +28,7 @@ import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
+from core.job_coordinator import JobCoordinator, AlreadyRunning
 from core.database import Database
 from core.environment import detect_environment
 from core.llm_provider import LLMProvider
@@ -123,6 +124,8 @@ class Orchestrator:
         self.strategy = StrategyEngine(self.db, self.settings)
         self.learning = LearningEngine(self.db, self.llm)
         self.strategy.set_learning_engine(self.learning)
+
+        self.jobs = JobCoordinator()
 
         # Scheduler (controlled thread pool)
         self.scheduler = BackgroundScheduler(
@@ -661,40 +664,29 @@ class Orchestrator:
     # ── Safe Wrappers (with timeout + resource check) ────────────────
 
     def _scan_all_safe(self):
-        """Wrapper: run _scan_all with a hard timeout."""
+        """Wrapper: run _scan_all with a hard timeout using job coordinator."""
         if not self._check_resources():
             logger.info("Scan skipped: resources too low")
             return
 
-        # Run scan in a thread with hard timeout
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._scan_all)
-            try:
-                future.result(timeout=SCAN_TIMEOUT_SECONDS)
-            except concurrent.futures.TimeoutError:
-                logger.warning(
-                    f"Scan ABORTED: exceeded {SCAN_TIMEOUT_SECONDS}s timeout"
-                )
-                future.cancel()
-            except Exception as e:
-                logger.error(f"Scan error: {e}")
+        try:
+            self.jobs.run_with_timeout("SCAN_ALL", None, SCAN_TIMEOUT_SECONDS, self._scan_all)
+        except AlreadyRunning:
+            logger.info("Scan skipped: already running")
+        except Exception as e:
+            logger.error(f"Scan error: {e}")
 
     def _act_on_best_safe(self):
-        """Wrapper: run _act_on_best with a hard timeout."""
+        """Wrapper: run _act_on_best with a hard timeout using job coordinator."""
         if not self._check_resources():
             return
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._act_on_best)
-            try:
-                future.result(timeout=ACT_TIMEOUT_SECONDS)
-            except concurrent.futures.TimeoutError:
-                logger.warning(
-                    f"Action ABORTED: exceeded {ACT_TIMEOUT_SECONDS}s timeout"
-                )
-                future.cancel()
-            except Exception as e:
-                logger.error(f"Action error: {e}")
+        try:
+            self.jobs.run_with_timeout("ACT_BEST", None, ACT_TIMEOUT_SECONDS, self._act_on_best)
+        except AlreadyRunning:
+            logger.info("Action skipped: already running")
+        except Exception as e:
+            logger.error(f"Action error: {e}")
 
     # ── Scheduled Jobs ───────────────────────────────────────────────
 
@@ -949,7 +941,14 @@ class Orchestrator:
                         -_safe_score(o),
                     ))
 
-            opp = pending[0]
+            opp = None
+            for candidate in pending:
+                if self.db.claim_opportunity(candidate["id"]):
+                    opp = candidate
+                    break
+            
+            if not opp:
+                continue
 
             # Map DB fields to what platform bots expect
             if "subreddit_or_query" in opp and "subreddit" not in opp:
