@@ -512,6 +512,18 @@ class Database:
             self.conn.commit()
             return cursor
 
+    @staticmethod
+    def _cutoff(hours=0.0, days=0.0, minutes=0.0) -> str:
+        """Return a UTC cutoff in SQLite's textual datetime format.
+
+        Columns are populated by datetime('now')/strftime → 'YYYY-MM-DD HH:MM:SS'
+        (space sep, no micros). Comparing that against isoformat() ('T' sep, micros)
+        as a string breaks the filter since space(0x20) < 'T'(0x54). This reproduces
+        SQLite's format so string comparisons in WHERE timestamp > ? are correct.
+        """
+        return (datetime.utcnow() - timedelta(hours=hours, days=days, minutes=minutes)) \
+            .strftime("%Y-%m-%d %H:%M:%S")
+
     # ── Actions ──────────────────────────────────────────────────────
 
     def log_action(
@@ -557,7 +569,7 @@ class Database:
         platform: Optional[str] = None,
     ) -> List[Dict]:
         """Get recent actions of a specific type."""
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         query = "SELECT * FROM actions WHERE action_type = ? AND timestamp > ?"
         params: list = [action_type, since]
         if platform:
@@ -590,7 +602,7 @@ class Database:
         self, project: str, days: int = 30,
     ) -> List[Dict]:
         """Get average sentiment grouped by tone_style."""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        since = self._cutoff(days=days)
         rows = self.conn.execute(
             """SELECT tone_style, AVG(sentiment_score) as avg_sentiment,
                       COUNT(*) as count, SUM(reply_count_analyzed) as total_replies
@@ -606,7 +618,7 @@ class Database:
         self, project: str, days: int = 30,
     ) -> List[Dict]:
         """Get average sentiment grouped by subreddit."""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        since = self._cutoff(days=days)
         rows = self.conn.execute(
             """SELECT subreddit, AVG(sentiment_score) as avg_sentiment,
                       COUNT(*) as count, SUM(reply_count_analyzed) as total_replies
@@ -667,7 +679,7 @@ class Database:
         limit: int = 50,
     ) -> List[Dict]:
         """Get recent actions within the last N hours."""
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         query = "SELECT * FROM actions WHERE timestamp > ?"
         params: list = [since]
         if platform:
@@ -692,7 +704,7 @@ class Database:
 
         If write_only=True, only count comment/post actions (not upvote/subscribe).
         """
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         query = "SELECT COUNT(*) FROM actions WHERE timestamp > ? AND success = 1"
         params: list = [since]
         if account:
@@ -749,8 +761,7 @@ class Database:
     ) -> int:
         """Count only content actions (post, comment, reply) in the last N hours.
         Excludes warm-up actions like upvote, subscribe, save, follow."""
-        from datetime import datetime, timedelta
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         query = (
             "SELECT COUNT(*) FROM actions WHERE timestamp > ? AND success = 1 "
             "AND action_type IN ('post', 'comment', 'reply', 'hub_post', 'user_post')"
@@ -775,8 +786,7 @@ class Database:
 
     def get_recent_comments_by_account(self, account: str, subreddit: str = None, hours: int = 72, limit: int = 10) -> list:
         """Get recent comments by this account to avoid repetition."""
-        from datetime import datetime, timedelta
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         if subreddit:
             rows = self.conn.execute(
                 "SELECT comment_text, subreddit, post_id, timestamp FROM account_comments "
@@ -866,7 +876,7 @@ class Database:
         self, hours: int = 24, limit: int = 50,
     ) -> List[Dict]:
         """Get recently rejected/skipped opportunities with reasons."""
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         rows = self.conn.execute(
             """SELECT target_id, platform, project, title, subreddit_or_query,
                       score, status, rejection_reason, timestamp
@@ -920,7 +930,7 @@ class Database:
         Used as cross-account CAPTCHA cooling: if sub X burned account A,
         other accounts avoid it too for a while.
         """
-        since = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+        since = self._cutoff(minutes=minutes)
         row = self.conn.execute(
             """SELECT COUNT(*) FROM decision_log
                WHERE decision_type = 'captcha_hit'
@@ -934,7 +944,7 @@ class Database:
         self, hours: int = 2, decision_type: str = "", limit: int = 30,
     ) -> List[Dict]:
         """Get recent decisions for debugging."""
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         query = "SELECT * FROM decision_log WHERE timestamp > ?"
         params: list = [since]
         if decision_type:
@@ -1022,7 +1032,7 @@ class Database:
 
     def get_stats_summary(self, hours: int = 24) -> Dict[str, Any]:
         """Get aggregated stats for the last N hours."""
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         stats = {}
 
         rows = self.conn.execute(
@@ -1076,7 +1086,7 @@ class Database:
         Uses JOIN to opportunities table (which holds subreddit info).
         Hub posts use a separate flow and are not counted here.
         """
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = self._cutoff(hours=hours)
         try:
             row = self.conn.execute(
                 """SELECT COUNT(*) FROM actions a
@@ -1144,7 +1154,7 @@ class Database:
         self, project: str = "", platform: str = "", days: int = 30,
     ) -> List[Dict]:
         """Get aggregated performance stats grouped by subreddit/keyword."""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        since = self._cutoff(days=days)
         query = """
             SELECT subreddit_or_query, keyword, action_type,
                    COUNT(*) as count,
@@ -1170,7 +1180,7 @@ class Database:
         self, project: str, days: int = 30,
     ) -> List[Dict]:
         """Get aggregated performance stats grouped by post_type."""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        since = self._cutoff(days=days)
         rows = self.conn.execute(
             """SELECT post_type, COUNT(*) as count,
                       AVG(engagement_score) as avg_engagement,
@@ -1313,7 +1323,7 @@ class Database:
 
     def get_stale_subreddits(self, hours: int = 24, project: str = "") -> List[str]:
         """Get subreddits whose intel is older than N hours or missing."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        cutoff = self._cutoff(hours=hours)
         query = "SELECT subreddit FROM subreddit_intel WHERE updated_at < ?"
         params: list = [cutoff]
         if project:
@@ -1390,7 +1400,7 @@ class Database:
         self, project: str, account: str, hours: int = 48,
     ) -> List[Dict]:
         """Get subreddits where last_activity is older than N hours."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        cutoff = self._cutoff(hours=hours)
         rows = self.conn.execute(
             """SELECT * FROM community_presence
                WHERE project = ? AND account = ?
@@ -1431,7 +1441,7 @@ class Database:
             query += " AND topic LIKE ?"
             params.append(f"%{topic}%")
         if max_age_hours > 0:
-            cutoff = (datetime.utcnow() - timedelta(hours=max_age_hours)).isoformat()
+            cutoff = self._cutoff(hours=max_age_hours)
             query += " AND timestamp > ?"
             params.append(cutoff)
         # Filter out expired entries
@@ -1477,7 +1487,7 @@ class Database:
         self, subreddit: str = "", project: str = "", days: int = 7,
     ) -> List[Dict]:
         """Get recent subreddit trends."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = self._cutoff(days=days)
         query = "SELECT * FROM subreddit_trends WHERE timestamp > ?"
         params: list = [cutoff]
         if subreddit:
@@ -1620,8 +1630,8 @@ class Database:
         self, project: str, days_ago_start: int, days_ago_end: int,
     ) -> List[Dict]:
         """Get performance stats for a specific date range."""
-        since = (datetime.utcnow() - timedelta(days=days_ago_start)).isoformat()
-        until = (datetime.utcnow() - timedelta(days=days_ago_end)).isoformat()
+        since = self._cutoff(days=days_ago_start)
+        until = self._cutoff(days=days_ago_end)
         rows = self.conn.execute(
             """SELECT subreddit_or_query, keyword, action_type,
                       COUNT(*) as count,
@@ -1833,7 +1843,7 @@ class Database:
 
     def cleanup_stale_relationships(self, days: int = 60):
         """Remove inactive relationships older than N days."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = self._cutoff(days=days)
         with self._lock:
             # Delete conversations for stale noticed/engaged relationships
             self.conn.execute(
@@ -1899,8 +1909,8 @@ class Database:
 
     def _cleanup_old_data(self):
         """Remove old data to keep DB small."""
-        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
-        cutoff_7d = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        cutoff = self._cutoff(days=30)
+        cutoff_7d = self._cutoff(days=7)
         with self._lock:
             self.conn.execute("DELETE FROM actions WHERE timestamp < ?", (cutoff,))
             self.conn.execute(
