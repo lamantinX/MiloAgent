@@ -1,0 +1,8 @@
+# Development-only dependencies. Not required at runtime.
+# Install alongside requirements.txt: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+# Test runner
+pytest>=8.0,<9.0
+
+# HTTP client used by FastAPI TestClient in future integration tests
+httpx>=0.27,<1.0
