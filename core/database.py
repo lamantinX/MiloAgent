@@ -40,6 +40,10 @@ class Database:
         # Initialize tables on the main thread connection
         self._init_tables()
 
+        # Apply ordered schema migrations beyond the v4 baseline.
+        from core.schema_migrations import run_migrations
+        run_migrations(self.conn)
+
     def _make_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection configured for WAL mode."""
         conn = sqlite3.connect(self.db_path, timeout=30)
