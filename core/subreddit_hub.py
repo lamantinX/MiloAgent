@@ -49,6 +49,7 @@ class SubredditHubManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         subreddit TEXT NOT NULL UNIQUE,
                         project TEXT NOT NULL,
+                        business_id TEXT,
                         created_by TEXT NOT NULL,
                         created_at TEXT DEFAULT (datetime('now')),
                         description TEXT,

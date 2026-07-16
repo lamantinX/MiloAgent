@@ -236,6 +236,113 @@ def business_edit(name):
     click.echo("Changes are auto-detected when the bot is running (hot-reload).")
 
 
+@business.command(name="migrate-legacy")
+@click.option(
+    "--dry-run", "dry_run", is_flag=True,
+    help="Report what would change without writing (default).",
+)
+@click.option(
+    "--apply", "apply", is_flag=True,
+    help="Back up and backfill business_id on tenant rows.",
+)
+@click.option(
+    "--default-business", "default_business", default=None,
+    help="Use this business_id for ALL legacy products (only when they all "
+         "belong to it).",
+)
+@click.option(
+    "--db", "db_path", default="data/miloagent.db",
+    help="Path to the SQLite database.",
+)
+def business_migrate_legacy(dry_run, apply, default_business, db_path):
+    """Backfill business_id on historical tenant data from product config.
+
+    Maps each legacy ``project`` name to a (product_id, business_id) using the
+    loaded business/product registry. Unmappable rows are listed by identifier
+    only (table, id, project) and never have their content printed.
+
+    With neither flag, behaves as --dry-run.
+    """
+    if dry_run and apply:
+        click.echo(click.style("--dry-run and --apply are mutually exclusive.", fg="red"))
+        raise SystemExit(2)
+
+    from core.business_manager import BusinessManager
+    from core.business_migrator import (
+        MigrationError, apply_migration, build_ownership_map,
+        plan_migration,
+    )
+    from core.database import Database
+
+    mgr = BusinessManager()
+    products = mgr.projects
+    try:
+        ownership = build_ownership_map(products, default_business)
+    except MigrationError as e:
+        click.echo(click.style(f"Ownership mapping failed: {e}", fg="red"))
+        raise SystemExit(1)
+
+    db = Database(db_path)
+    try:
+        conn = db.conn
+        report = plan_migration(conn, ownership)
+
+        click.echo(
+            f"\nLegacy tenant rows: {report.mapped_rows} mappable, "
+            f"{report.unmapped_rows} unmappable."
+        )
+        if report.per_table_counts:
+            click.echo("Per-table backfill candidates:")
+            for tbl, cnt in sorted(report.per_table_counts.items()):
+                click.echo(f"  {tbl}: {cnt}")
+        if report.unmapped:
+            click.echo(click.style(
+                "\nUnmappable rows (table, id, project) — identifiers only:",
+                fg="yellow",
+            ))
+            for tbl, row_id, legacy in report.unmapped:
+                click.echo(f"  {tbl} id={row_id} project={legacy!r}")
+
+        if not apply:
+            click.echo(click.style(
+                "\nDry run — no changes made. Re-run with --apply to backfill.",
+                fg="green",
+            ))
+            # Exit nonzero if there are unmappable rows so callers can detect it.
+            if report.unmapped:
+                raise SystemExit(1)
+            return
+
+        # ── apply ──
+        from core.business_migrator import affected_yaml_paths
+        yaml_paths = affected_yaml_paths(products, mgr.projects_dir)
+        backup_root = Path("backups") / "business_migration"
+        try:
+            result = apply_migration(
+                conn, ownership, db_path, yaml_paths, backup_root
+            )
+        except MigrationError as e:
+            click.echo(click.style(f"Migration refused: {e}", fg="red"))
+            raise SystemExit(1)
+
+        click.echo(click.style(
+            f"\nMigrated {result.mapped_rows} row(s) to a business_id.",
+            fg="green",
+        ))
+        if result.backed_up_db:
+            click.echo(f"DB backup: {result.backed_up_db}")
+        if result.backed_up_yaml_dir:
+            click.echo(f"YAML backup: {result.backed_up_yaml_dir}")
+        if result.unmapped:
+            click.echo(click.style(
+                f"Warning: {result.unmapped_rows} unmappable row(s) remain.",
+                fg="yellow",
+            ))
+            raise SystemExit(1)
+    finally:
+        db.close()
+
+
 # ─── SCAN ────────────────────────────────────────────────────────────
 
 

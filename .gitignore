@@ -47,6 +47,12 @@ data/curator_cache/
 projects/*.yaml
 !projects/example_project.yaml
 
+# ── Business configs (real ones are private; track only template) ──
+# Real business YAMLs may hold private data. Only the template is committed.
+businesses/*.yaml
+!businesses/example_business.yaml
+businesses/*.local.yaml
+
 # ── Server-side config overrides (NEVER commit) ──────────
 # On the server, rename real configs to *.local.yaml.
 # The code auto-detects .local.yaml and loads it instead.
