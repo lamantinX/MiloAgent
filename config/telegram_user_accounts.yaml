@@ -7,12 +7,15 @@
 
 accounts:
   - phone: "+1234567890"
+    account_type: "user"
     api_id: "YOUR_API_ID"
     api_hash: "YOUR_API_HASH"
     session_file: "data/sessions/telegram_user1.session"
+    account_id: "primary_acct_1"
+    business_id: "unconfigured_business"
     enabled: false
     persona: "auto"
-    assigned_projects: ["my_project"]
+    assigned_products: ["my_project"]
     cooldown_minutes: 15
     max_messages_per_hour: 8
     target_groups:

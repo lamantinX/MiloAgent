@@ -113,14 +113,20 @@ class TelegramGroupBot(BasePlatform):
                 "  pip install telethon"
             )
 
+        if not self.account_config.get('account_id'):
+            raise ValueError('telegram_user_accounts.yaml must contain a stable account_id')
+        if not self.account_config.get('business_id'):
+            raise ValueError('telegram_user_accounts.yaml must contain a business_id')
+        if getattr(self, '_session_file', None) is None:
+            raise ValueError('Telegram user session must have a session_file path')
+        
         if not self._api_id or not self._api_hash:
-            raise ValueError(
-                "Telegram api_id and api_hash not configured.\n"
-                "  1. Go to https://my.telegram.org\n"
-                "  2. Create an app to get api_id and api_hash\n"
-                "  3. Add them to config/telegram_user_accounts.yaml"
-            )
-
+            raise ValueError('Telegram config err')
+        try:
+            self._api_id = int(self._api_id)
+        except ValueError:
+            raise ValueError('Telegram api_id must be numeric')
+        
         if self.client is None:
             self.client = TelegramClient(
                 self._session_file,
@@ -138,9 +144,11 @@ class TelegramGroupBot(BasePlatform):
             )
 
         me = await self.client.get_me()
+        if getattr(me, 'bot', False):
+            raise ValueError('Telegram user engagement cannot be run with a bot identity.')
         self._username = me.username or me.phone or self._phone
         self._authenticated = True
-        logger.info(f"Telegram connected as @{self._username}")
+        logger.info(f"Telegram user engagement connected as @{self._username}")
 
     # ── Group Discovery & Auto-Join ─────────────────────────────────────
 

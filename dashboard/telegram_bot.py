@@ -1,3 +1,8 @@
+"""
+WARNING: Telegram admin dashboard component.
+This must NEVER be passed to or used by platform engagement code.
+It uses the Bot API identity.
+"""
 """Telegram dashboard bot for monitoring and control."""
 
 import asyncio
@@ -135,7 +140,7 @@ class TelegramDashboard:
     def build(self):
         token = self.config.get("bot_token", "")
         if not token or token.startswith("YOUR_"):
-            logger.warning("Telegram bot token not configured")
+            logger.warning("Telegram admin bot token not configured")
             return
 
         self.app = Application.builder().token(token).build()
@@ -1277,9 +1282,9 @@ class TelegramDashboard:
         if not self.app:
             self.build()
         if not self.app:
-            logger.error("Cannot start Telegram bot — not configured")
+            logger.error("Cannot start Telegram admin bot — not configured")
             return
-        logger.info("Starting Telegram dashboard...")
+        logger.info("Starting Telegram admin bot dashboard...")
 
         loop = asyncio.new_event_loop()
         # NOTE: Do NOT call asyncio.set_event_loop(loop) here — it would
