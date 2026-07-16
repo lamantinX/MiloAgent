@@ -1,3 +1,17 @@
+def _load_reddit_api_config() -> dict:
+    """Load client_id/secret from config/reddit_api.local.yaml."""
+    import yaml
+    paths = [
+        Path("config/reddit_api.local.yaml"),
+        Path("config/reddit_api.yaml"),
+    ]
+    for p in paths:
+        if p.exists():
+            with open(p) as f:
+                return yaml.safe_load(f) or {}
+    return {}
+
+
 """FastAPI web dashboard V2 for MiloAgent — full TUI parity + CRUD + auth."""
 
 import asyncio
@@ -746,34 +760,38 @@ class WebDashboard:
         #   3. GET  /api/reddit/oauth/callback?code=&state=  → stores refresh_token
         #   4. PRAW uses refresh_token for that account (no cookies, no expiry)
 
-        def _load_reddit_api_config() -> dict:
-            """Load client_id/secret from config/reddit_api.local.yaml."""
-            import yaml
-            paths = [
-                Path("config/reddit_api.local.yaml"),
-                Path("config/reddit_api.yaml"),
-            ]
-            for p in paths:
-                if p.exists():
-                    with open(p) as f:
-                        return yaml.safe_load(f) or {}
-            return {}
-
         class OAuthStartModel(BaseModel):
-            username: str
+            business_id: str
+            account_id: str
+            redirect_uri: Optional[str] = None
 
         @app.post("/api/reddit/oauth/start")
         async def reddit_oauth_start(body: OAuthStartModel, _=Depends(self._verify_token)):
-            """Generate the Reddit authorization URL for a given account username."""
+            """Generate the Reddit authorization URL for a given account business_id and account_id."""
             cfg = _load_reddit_api_config()
             client_id = cfg.get("client_id", "")
-            redirect_uri = cfg.get("redirect_uri", "https://milo.soclose.co/api/reddit/oauth/callback")
+            redirect_uri = body.redirect_uri or cfg.get("redirect_uri", "https://milo.soclose.co/api/reddit/oauth/callback")
+            
             if not client_id:
                 return {"ok": False, "error": "Reddit API not configured (config/reddit_api.local.yaml missing client_id)"}
 
+            # Verify through strict manager
+            account = self.orch.account_mgr.get_account("reddit", body.business_id, body.account_id)
+            if not account:
+                return {"ok": False, "error": "Account not found, disabled/banned/on cooldown, or wrong business."}
+
             scopes = "identity,submit,comment,vote,subscribe,read,flair"
             import urllib.parse
-            state = urllib.parse.quote(body.username)
+            
+            # Use bounded one-time state store
+            from dashboard.oauth_state import oauth_store
+            state = oauth_store.generate_state(
+                purpose="reddit_oauth",
+                business_id=body.business_id,
+                account_id=body.account_id,
+                redirect_to=redirect_uri
+            )
+
             auth_url = (
                 f"https://www.reddit.com/api/v1/authorize"
                 f"?client_id={client_id}"
@@ -783,7 +801,7 @@ class WebDashboard:
                 f"&duration=permanent"
                 f"&scope={scopes}"
             )
-            return {"ok": True, "username": body.username, "auth_url": auth_url}
+            return {"ok": True, "auth_url": auth_url}
 
         @app.get("/api/reddit/oauth/callback")
         async def reddit_oauth_callback(
@@ -795,26 +813,43 @@ class WebDashboard:
             Exchanges code for refresh_token and saves to account config.
             No auth required -- Reddit calls this directly.
             """
+            from fastapi.responses import RedirectResponse
+            
             if error:
-                return {"ok": False, "error": f"Reddit denied access: {error}"}
+                logger.error(f"Reddit OAuth denied: {error}")
+                return RedirectResponse("/?oauth_status=error&oauth_message=reddit_denied", status_code=303)
+                
             if not code or not state:
-                return {"ok": False, "error": "Missing code or state parameter"}
-
-            import urllib.parse
-            username = urllib.parse.unquote(state)
+                logger.error("Reddit OAuth missing code or state")
+                return RedirectResponse("/?oauth_status=error&oauth_message=missing_params", status_code=303)
+            
+            from dashboard.oauth_state import oauth_store
+            state_data = oauth_store.consume(state)
+            if not state_data:
+                logger.error("Reddit OAuth unknown, expired, or reused state")
+                return RedirectResponse("/?oauth_status=error&oauth_message=invalid_state", status_code=303)
+                
+            if state_data["purpose"] != "reddit_oauth":
+                logger.error("Reddit OAuth invalid state purpose")
+                return RedirectResponse("/?oauth_status=error&oauth_message=invalid_state", status_code=303)
+                
+            business_id = state_data["business_id"]
+            account_id = state_data["account_id"]
+            redirect_uri = state_data["redirect_to"]
 
             cfg = _load_reddit_api_config()
             client_id = cfg.get("client_id", "")
             client_secret = cfg.get("client_secret", "")
-            redirect_uri = cfg.get("redirect_uri", "https://milo.soclose.co/api/reddit/oauth/callback")
-
+            
             if not client_id or not client_secret:
-                return {"ok": False, "error": "Reddit API credentials not configured on server"}
+                logger.error("Reddit API credentials not configured on server")
+                return RedirectResponse("/?oauth_status=error&oauth_message=missing_credentials", status_code=303)
 
             # Exchange code for tokens
             import requests as _requests
             import base64 as _b64
             credentials = _b64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            
             try:
                 resp = _requests.post(
                     "https://www.reddit.com/api/v1/access_token",
@@ -832,54 +867,58 @@ class WebDashboard:
                 )
                 data = resp.json()
             except Exception as e:
-                return {"ok": False, "error": f"Token exchange failed: {e}"}
-
+                logger.error("Reddit Token exchange failed")
+                return RedirectResponse("/?oauth_status=error&oauth_message=exchange_failed", status_code=303)
+                
             if "error" in data:
-                return {"ok": False, "error": f"Reddit token error: {data['error']}"}
-
+                logger.error("Reddit token error")
+                return RedirectResponse("/?oauth_status=error&oauth_message=token_error", status_code=303)
+                
             refresh_token = data.get("refresh_token", "")
-            access_token = data.get("access_token", "")
             if not refresh_token:
-                return {"ok": False, "error": "No refresh_token in Reddit response"}
+                logger.error("No refresh_token in Reddit response")
+                return RedirectResponse("/?oauth_status=error&oauth_message=no_refresh_token", status_code=303)
 
-            # Save refresh_token to account config YAML
+            # Save refresh_token to ignored local config
             try:
                 import yaml
-                config_path = Path("config/reddit_accounts.local.yaml")
+                import os
+                config_path = Path("config/accounts.local.yaml")
                 if not config_path.exists():
-                    config_path = Path("config/reddit_accounts.yaml")
-                with open(config_path) as f:
+                     config_path = Path("config/reddit_accounts.local.yaml")
+                if not config_path.exists():
+                     config_path = Path("config/reddit_accounts.yaml")
+
+                with open(config_path, "r", encoding="utf-8") as f:
                     accounts_cfg = yaml.safe_load(f) or {}
 
-                accounts = accounts_cfg.get("accounts", [])
                 found = False
-                for acc in accounts:
-                    if acc.get("username", "").lower() == username.lower():
-                        acc["refresh_token"] = refresh_token
-                        found = True
-                        break
-
+                
+                # Check structure
+                if "accounts" in accounts_cfg and isinstance(accounts_cfg["accounts"], list):
+                     print(f"DEBUG: {business_id=} {account_id=} in config={accounts_cfg}")
+                     for acc in accounts_cfg["accounts"]:
+                         if acc.get("business_id") == business_id and acc.get("account_id") == account_id:
+                              acc["refresh_token"] = refresh_token
+                              found = True
+                              break
+                
                 if not found:
-                    return {"ok": False, "error": f"Account '{username}' not found in config"}
+                    logger.error(f"Reddit OAuth account {business_id}:{account_id} not found in config")
+                    return RedirectResponse("/?oauth_status=error&oauth_message=account_not_found", status_code=303)
 
-                with open(config_path, "w") as f:
+                temp_path = config_path.with_suffix(".tmp")
+                with open(temp_path, "w", encoding="utf-8") as f:
                     yaml.dump(accounts_cfg, f, default_flow_style=False, allow_unicode=True)
-
-                logger.info(f"Reddit OAuth: refresh_token saved for {username}")
+                os.replace(temp_path, config_path)
+                
+                logger.info(f"Reddit OAuth: refresh_token saved successfully (business: {business_id}, account: {account_id})")
             except Exception as e:
-                return {"ok": False, "error": f"Failed to save token: {e}"}
+                logger.error(f"Failed to save Reddit OAuth token")
+                return RedirectResponse("/?oauth_status=error&oauth_message=save_failed", status_code=303)
 
-            # Return a simple success page (browser-friendly)
-            from fastapi.responses import HTMLResponse
-            html = f"""<!DOCTYPE html>
-<html><head><title>Reddit OAuth -- MiloAgent</title>
-<style>body{{font-family:sans-serif;text-align:center;padding:60px;background:#1a1a2e;color:#e0e0e0}}
-h1{{color:#ff6b35}}p{{color:#a0a0c0}}</style></head>
-<body><h1>Authorized!</h1>
-<p>Reddit account <strong>{username}</strong> successfully linked to MiloAgent.</p>
-<p>refresh_token saved. You can close this tab.</p>
-</body></html>"""
-            return HTMLResponse(content=html)
+            return RedirectResponse("/?oauth_status=success", status_code=303)
+
 
         @app.get("/api/reddit/oauth/status")
         async def reddit_oauth_status(_=Depends(self._verify_token)):
