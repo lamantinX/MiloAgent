@@ -303,6 +303,17 @@ async function apiDelete(path) {
 // HELPERS
 // ══════════════════════════════════════════════════════════════
 function esc(s) { if(!s) return ''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+// Build an action button via the DOM API so server-derived identifiers are
+// never concatenated into an executable HTML/JS attribute. `handler` closes
+// over the exact identifier value the action should receive.
+function actionButton(label, cls, handler) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = label;
+  b.addEventListener('click', handler);
+  return b;
+}
 function fmtUp(s) { if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; return Math.floor(s/86400)+'d '+Math.floor((s%86400)/3600)+'h'; }
 function fmtCD(s) { if(s<0)return'paused'; if(s<60)return s+'s'; if(s<3600)return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; }
 function resBar(label, pct, warn, crit) {
@@ -1036,7 +1047,16 @@ function renderManageProjects(d) {
   const el = document.getElementById('projectsManage');
   if (!el) return;
   if (!d||!d.length) { el.innerHTML='<p class="no-data">No projects</p>'; return; }
-  el.innerHTML = d.map(p => `<div class="entity-card"><div><div class="name">${esc(p.name)} <span class="badge ${p.enabled?'on':'off'}">${p.enabled?'Active':'Off'}</span></div><div class="meta">${esc(p.url||'')} — ${p.actions_24h||0} actions/24h — weight: ${p.weight||1}</div></div><div class="actions-area"><button class="btn btn-sm" onclick="editProject(${JSON.stringify(p.name)})">Edit</button><button class="btn btn-sm danger" onclick="deleteProject(${JSON.stringify(p.name)})">Delete</button></div></div>`).join('');
+  el.innerHTML = '';
+  d.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'entity-card';
+    card.innerHTML = `<div><div class="name">${esc(p.name)} <span class="badge ${p.enabled?'on':'off'}">${p.enabled?'Active':'Off'}</span></div><div class="meta">${esc(p.url||'')} — ${p.actions_24h||0} actions/24h — weight: ${p.weight||1}</div></div><div class="actions-area"></div>`;
+    const actions = card.querySelector('.actions-area');
+    actions.appendChild(actionButton('Edit', 'btn btn-sm', () => editProject(p.name)));
+    actions.appendChild(actionButton('Delete', 'btn btn-sm danger', () => deleteProject(p.name)));
+    el.appendChild(card);
+  });
 }
 
 function renderManageAccounts(d) {
@@ -1046,15 +1066,17 @@ function renderManageAccounts(d) {
   const filtered = d.filter(a => a.platform !== 'twitter');
   const tierColor = {veteran:'var(--gold,#f5c518)',established:'var(--green)',growing:'var(--blue)',new:'var(--text3)'};
   const tierIcon  = {veteran:'★',established:'◆',growing:'▲',new:'○'};
-  el.innerHTML = filtered.map(a => {
+  el.innerHTML = '';
+  filtered.forEach(a => {
     const tn = a.tier_name||'new';
     const karma = a.karma!=null ? `karma ${a.karma}` : 'karma ?';
     const cap = a.daily_cap||3;
     const canPost = a.can_post ? '' : ' · comments only';
     const tierBadge = `<span style="color:${tierColor[tn]||'var(--text3)'};font-size:11px;font-weight:700;letter-spacing:.5px">${tierIcon[tn]||'○'} ${tn.toUpperCase()}</span>`;
     const writeCount = (a.types||{}).comment||0 + (a.types||{}).post||0;
-    return `<div class="entity-card">
-      <div style="flex:1">
+    const card = document.createElement('div');
+    card.className = 'entity-card';
+    card.innerHTML = `<div style="flex:1">
         <div class="name" style="display:flex;align-items:center;gap:8px">
           @${esc(a.username)}
           <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase">${esc(a.platform)}</span>
@@ -1069,10 +1091,11 @@ function renderManageAccounts(d) {
       <div class="actions-area">
         ${hpBar(a.status)}
         <span class="badge ${a.status==='healthy'?'healthy':a.status==='cooldown'?'cooldown':'error'}">${esc(a.status)}</span>
-        <button class="btn btn-sm danger" onclick="removeAccount(${JSON.stringify(a.platform)},${JSON.stringify(a.username)})">Remove</button>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    const actions = card.querySelector('.actions-area');
+    actions.appendChild(actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.username)));
+    el.appendChild(card);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1311,11 +1334,19 @@ function renderCookies(d) {
   if (!el) return;
   if (!d||!d.length) { el.innerHTML='<p class="no-data">No accounts configured</p>'; return; }
   const filtered = d.filter(c => c.platform !== 'twitter');
-  el.innerHTML = filtered.map(c => {
+  el.innerHTML = '';
+  filtered.forEach(c => {
     const ok = c.has_cookies;
     const keys = (c.key_cookies||[]).join(', ');
-    return `<div class="entity-card"><div><div class="name">@${esc(c.username)} <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase">${esc(c.platform)}</span></div><div class="meta">${ok ? `${c.count||'?'} cookies | Keys: ${keys||'none'} | ${c.size_kb||0}KB` : '<span style="color:var(--red)">No cookies — login required</span>'}</div></div><div class="actions-area"><span class="badge ${ok?'on':'off'}">${ok?'Active':'Missing'}</span>${ok?`<button class="btn btn-sm danger" onclick="deleteCookies(${JSON.stringify(c.platform)},${JSON.stringify(c.username)})">Delete</button>`:''}</div></div>`;
-  }).join('');
+    const card = document.createElement('div');
+    card.className = 'entity-card';
+    card.innerHTML = `<div><div class="name">@${esc(c.username)} <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase">${esc(c.platform)}</span></div><div class="meta">${ok ? `${c.count||'?'} cookies | Keys: ${keys||'none'} | ${c.size_kb||0}KB` : '<span style="color:var(--red)">No cookies — login required</span>'}</div></div><div class="actions-area"><span class="badge ${ok?'on':'off'}">${ok?'Active':'Missing'}</span></div>`;
+    if (ok) {
+      const actions = card.querySelector('.actions-area');
+      actions.appendChild(actionButton('Delete', 'btn btn-sm danger', () => deleteCookies(c.platform, c.username)));
+    }
+    el.appendChild(card);
+  });
 }
 
 async function loadCookieAccounts() {
