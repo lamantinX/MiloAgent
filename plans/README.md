@@ -18,8 +18,8 @@ The target model is deliberately explicit:
 | 002 | Make content validation deterministic and fail closed | P1 | M | 001 | DONE — `codex/improve-002-content-validation` @ 02c1143 |
 | 003 | Introduce first-class businesses and migrate tenant data | P1 | L | 001 | DONE — `codex/improve-003-business-domain` @ 5bb49c6 (added business_id to 20 tenant tables; ordered transactional migrations; conservative migrator with backup) |
 | 004 | Enforce strict business/product/account routing | P1 | L | 003 | DONE — `codex/improve-004-account-routing` @ 0be0ab3 |
-| 005 | Guarantee Telegram commenting uses personal user sessions | P1 | M | 004 | TODO |
-| 006 | Bind Reddit OAuth to one business account with one-time state | P1 | M | 004 | TODO |
+| 005 | Guarantee Telegram commenting uses personal user sessions | P1 | M | 004 | DONE |
+| 006 | Bind Reddit OAuth to one business account with one-time state | P1 | M | 004 | DONE |
 | 007 | Make scheduled and manual jobs exclusive and opportunities atomic | P1 | L | 003 | DONE — `codex/improve-007-exclusive-jobs` @ 2314680 (Added JobCoordinator and atomic claim_opportunity) |
 | 008 | Replace unsafe dynamic inline dashboard handlers | P2 | S | 001 | DONE — `codex/improve-008-dashboard-events` @ e071589 (refactored 4 sites to use safe DOM actionButton helper) |
 | 009 | Add business-scoped dashboard APIs and multi-account CRUD | P1 | L | 004, 005, 006, 008 | TODO |
