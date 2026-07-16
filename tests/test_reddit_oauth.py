@@ -65,8 +65,9 @@ def get_test_dashboard():
         dashboard.web._pwd_ctx.verify.return_value = True
     from dashboard.web import WebDashboard
     from core.orchestrator import Orchestrator
-    torch = MagicMock()
     orch = MagicMock(spec=Orchestrator)
+    orch.business_mgr = MagicMock()
+    orch.business_mgr.get_business.return_value = {'id': 'b1', 'name': 'Biz 1'}
     orch.settings = MagicMock()
     orch.settings.get.return_value = {}
     orch.settings.get.return_value = {}
@@ -84,7 +85,7 @@ def test_oauth_start_endpoint_valid(monkeypatch):
     monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id", "redirect_uri": "http://test"})
     
     response = client.post(
-        "/api/reddit/oauth/start", 
+        "/api/reddit/oauth/start?business_id=b1", 
         json={"business_id": "b1", "account_id": "a1"},
         headers={"Authorization": f"Bearer {token}"}
     )
@@ -108,7 +109,7 @@ def test_oauth_start_endpoint_no_account(monkeypatch):
     monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id"})
     
     response = client.post(
-        "/api/reddit/oauth/start", 
+        "/api/reddit/oauth/start?business_id=b1", 
         json={"business_id": "b1", "account_id": "a1"},
         headers={"Authorization": f"Bearer {token}"}
     )

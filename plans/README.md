@@ -22,7 +22,7 @@ The target model is deliberately explicit:
 | 006 | Bind Reddit OAuth to one business account with one-time state | P1 | M | 004 | DONE |
 | 007 | Make scheduled and manual jobs exclusive and opportunities atomic | P1 | L | 003 | DONE — `codex/improve-007-exclusive-jobs` @ 2314680 (Added JobCoordinator and atomic claim_opportunity) |
 | 008 | Replace unsafe dynamic inline dashboard handlers | P2 | S | 001 | DONE — `codex/improve-008-dashboard-events` @ e071589 (refactored 4 sites to use safe DOM actionButton helper) |
-| 009 | Add business-scoped dashboard APIs and multi-account CRUD | P1 | L | 004, 005, 006, 008 | TODO |
+| 009 | Add business-scoped dashboard APIs and multi-account CRUD | P1 | L | 004, 005, 006, 008 | DONE |
 | 010 | Add the business switcher and business-aware account UI | P1 | L | 009 | TODO |
 | 011 | Add Telegram QR login with optional 2FA password | P1 | L | 005, 009, 010 | TODO |
 | 012 | Document the business, product, account, and Telegram workflows | P2 | M | 011 | TODO |

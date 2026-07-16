@@ -9,7 +9,8 @@ def _load_reddit_api_config() -> dict:
         if p.exists():
             with open(p) as f:
                 return yaml.safe_load(f) or {}
-    return {}
+    return {
+                "scope": "global",}
 
 
 """FastAPI web dashboard V2 for MiloAgent — full TUI parity + CRUD + auth."""
@@ -27,7 +28,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import (
     Depends,
@@ -233,6 +234,12 @@ class _ResourceSampler:
 
 # ── Models ───────────────────────────────────────────────────────
 
+class BusinessCreate(BaseModel):
+    business_id: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = ""
+    enabled: bool = True
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -263,13 +270,33 @@ class ProjectUpdate(BaseModel):
     tone_style: Optional[str] = None
 
 
-class AccountCreate(BaseModel):
-    platform: Literal["reddit", "telegram"]
+class AccountCreateBase(BaseModel):
+    account_id: str = Field(..., max_length=64)
+    business_id: str = Field(..., max_length=64)
+    persona: str = Field("helpful_casual", max_length=50)
+    projects: List[str] = []
+    enabled: bool = True
+
+class RedditAccountCreate(AccountCreateBase):
+    platform: Literal["reddit"]
     username: str = Field(..., min_length=1, max_length=100)
     password: str = Field(..., min_length=1, max_length=256)
     email: str = Field("", max_length=200)
-    persona: str = Field("helpful_casual", max_length=50)
-    projects: List[str] = []
+
+class TelegramAccountCreate(AccountCreateBase):
+    platform: Literal["telegram"]
+    api_id: str
+    api_hash: str
+    account_type: Literal["user"] = "user"
+    phone: Optional[str] = None
+
+class TwitterAccountCreate(AccountCreateBase):
+    platform: Literal["twitter"]
+    username: str
+    password: str
+    email: str = ""
+
+AccountCreate = Union[RedditAccountCreate, TelegramAccountCreate, TwitterAccountCreate]
 
 
 class PasteCookiesRequest(BaseModel):
@@ -422,6 +449,17 @@ class WebDashboard:
             return False
         return True
 
+    async def _require_business(
+        self,
+        business_id: str = Query(..., description="Business scope"),
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)
+    ) -> dict:
+        await self._verify_token(credentials)
+        business = self.orch.business_mgr.get_business(business_id)
+        if not business:
+            raise HTTPException(status_code=404, detail="Business restricted or not found.")
+        return business
+
     async def _verify_token(
         self,
         credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
@@ -429,6 +467,17 @@ class WebDashboard:
         if not credentials or not self._validate_session(credentials.credentials):
             raise HTTPException(status_code=401, detail="Invalid or expired session")
         return True
+
+    async def _require_business(
+        self,
+        business_id: str = Query(..., description="Business scope"),
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)
+    ) -> dict:
+        await self._verify_token(credentials)
+        business = self.orch.business_mgr.get_business(business_id)
+        if not business:
+            raise HTTPException(status_code=404, detail="Business restricted or not found.")
+        return business
 
     # ── Static files ─────────────────────────────────────────
 
@@ -505,6 +554,7 @@ class WebDashboard:
                 proj = p.get("project", {})
                 projects.append({"name": proj.get("name", ""), "enabled": proj.get("enabled", True)})
             return {
+                "scope": "global",
                 "paused": paused,
                 "mode": mode,
                 "uptime_seconds": int(time.time() - self._start_time),
@@ -515,9 +565,9 @@ class WebDashboard:
 
         # ── GET /api/stats ─────────────────────────────────
         @app.get("/api/stats")
-        async def get_stats(_=Depends(self._verify_token)):
+        async def get_stats(biz=Depends(self._require_business)):
             try:
-                raw = self.orch.db.get_stats_summary(hours=24)
+                raw = self.orch.db.get_stats_summary(hours=24, business_id=biz["id"])
                 actions = raw.get("actions", {})
                 by_platform = {}
                 by_type = {}
@@ -540,16 +590,16 @@ class WebDashboard:
 
         # ── GET /api/actions ───────────────────────────────
         @app.get("/api/actions")
-        async def get_actions(limit: int = Query(30, le=200), _=Depends(self._verify_token)):
+        async def get_actions(limit: int = Query(30, le=200), biz=Depends(self._require_business)):
             try:
-                rows = self.orch.db.get_recent_actions(hours=24, limit=limit)
+                rows = self.orch.db.get_recent_actions(hours=24, limit=limit, business_id=biz["id"])
                 return [dict(r) for r in (rows or [])]
             except Exception as e:
                 return {"error": str(e)}
 
         # ── GET /api/accounts ──────────────────────────────
         @app.get("/api/accounts")
-        async def get_accounts(_=Depends(self._verify_token)):
+        async def get_accounts(biz=Depends(self._require_business)):
             result = []
             try:
                 for platform in ("reddit", "telegram"):
@@ -557,7 +607,7 @@ class WebDashboard:
                     for acc in accounts:
                         username = acc["username"]
                         key = f"{platform}:{username}"
-                        recent = self.orch.db.get_recent_actions(hours=24, account=username, platform=platform, limit=200)
+                        recent = self.orch.db.get_recent_actions(hours=24, account=username, platform=platform, limit=200, business_id=biz["id"])
                         types = {}
                         for a in (recent or []):
                             t = a.get("action_type", "unknown")
@@ -591,15 +641,36 @@ class WebDashboard:
                 logger.debug(f"Accounts error: {e}")
             return result
 
+
+        # ── GET /api/businesses ────────────────────────────
+        @app.get("/api/businesses")
+        async def list_businesses(_=Depends(self._verify_token)):
+            return self.orch.business_mgr.businesses
+
+        # ── POST /api/businesses ───────────────────────────
+        @app.post("/api/businesses")
+        async def create_business(body: BusinessCreate, _=Depends(self._verify_token)):
+            try:
+                filepath = self.orch.business_mgr.add_business(
+                    business_id=body.business_id,
+                    name=body.name,
+                    description=body.description,
+                    enabled=body.enabled,
+                )
+                return {"ok": True, "business_id": body.business_id}
+            except ValueError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
         # ── GET /api/projects ──────────────────────────────
         @app.get("/api/projects")
-        async def get_projects(_=Depends(self._verify_token)):
+        async def get_projects(biz=Depends(self._require_business)):
             result = []
             for p in getattr(self.orch, "projects", []):
                 proj = p.get("project", {})
                 name = proj.get("name", "")
                 try:
-                    actions = self.orch.db.get_recent_actions(hours=24, limit=500)
+                    actions = self.orch.db.get_recent_actions(hours=24, limit=500, business_id=biz["id"])
                     count = sum(1 for a in (actions or []) if a.get("project") == name)
                 except Exception:
                     count = 0
@@ -617,7 +688,7 @@ class WebDashboard:
 
         # ── GET /api/projects/{name} ───────────────────────
         @app.get("/api/projects/{name}")
-        async def get_project_detail(name: str, _=Depends(self._verify_token)):
+        async def get_project_detail(name: str, biz=Depends(self._require_business)):
             proj = self.orch.business_mgr.get_project(name)
             if not proj:
                 raise HTTPException(status_code=404, detail="Project not found")
@@ -625,11 +696,12 @@ class WebDashboard:
 
         # ── POST /api/projects ─────────────────────────────
         @app.post("/api/projects")
-        async def create_project(body: ProjectCreate, _=Depends(self._verify_token)):
+        async def create_project(body: ProjectCreate, biz=Depends(self._require_business)):
             try:
                 filepath = self.orch.business_mgr.add_project(
                     name=body.name,
                     url=body.url,
+                    business_id=biz["id"],
                     description=body.description,
                     project_type=body.project_type,
                     weight=body.weight,
@@ -645,7 +717,7 @@ class WebDashboard:
 
         # ── PUT /api/projects/{name} ───────────────────────
         @app.put("/api/projects/{name}")
-        async def update_project(name: str, body: ProjectUpdate, _=Depends(self._verify_token)):
+        async def update_project(name: str, body: ProjectUpdate, biz=Depends(self._require_business)):
             import yaml
             # Find project file
             projects_dir = self.orch.business_mgr.projects_dir
@@ -653,7 +725,8 @@ class WebDashboard:
                 try:
                     with open(f) as fh:
                         data = yaml.safe_load(fh) or {}
-                    if data.get("project", {}).get("name", "").lower() != name.lower():
+                    proj = data.get("project", {})
+                    if proj.get("name", "").lower() != name.lower() or proj.get("business_id") != biz["id"]:
                         continue
                     # Apply updates
                     proj = data["project"]
@@ -694,7 +767,10 @@ class WebDashboard:
 
         # ── DELETE /api/projects/{name} ────────────────────
         @app.delete("/api/projects/{name}")
-        async def delete_project(name: str, _=Depends(self._verify_token)):
+        async def delete_project(name: str, biz=Depends(self._require_business)):
+            proj = self.orch.business_mgr.get_project(name)
+            if not proj or proj.get("business_id") != biz["id"]:
+                raise HTTPException(status_code=404, detail="Project not found")
             ok = self.orch.business_mgr.delete_project(name)
             if not ok:
                 raise HTTPException(status_code=404, detail="Project not found")
@@ -702,22 +778,25 @@ class WebDashboard:
 
         # ── POST /api/accounts ─────────────────────────────
         @app.post("/api/accounts")
-        async def create_account(body: AccountCreate, _=Depends(self._verify_token)):
-            msg = self.orch.account_mgr.add_account(
-                platform=body.platform,
-                username=body.username,
-                password=body.password,
-                email=body.email,
-                persona=body.persona,
-                projects=body.projects or None,
-            )
-            ok = "added" in msg.lower() or "success" in msg.lower()
-            return {"ok": ok, "message": msg}
+        async def create_account(body: AccountCreate, biz=Depends(self._require_business)):
+            body_dict = body.dict()
+            try:
+                dto = self.orch.account_mgr.add_account(
+                    platform=body_dict["platform"],
+                    account_id=body_dict["account_id"],
+                    business_id=biz["id"],
+                    account_data=body_dict,
+                )
+                return {"ok": True, "account": dto}
+            except ValueError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
         # ── DELETE /api/accounts/{platform}/{username} ─────
-        @app.delete("/api/accounts/{platform}/{username}")
-        async def remove_account(platform: str, username: str, _=Depends(self._verify_token)):
-            msg = self.orch.account_mgr.remove_account(platform, username)
+        @app.delete("/api/accounts/{platform}/{account_id}")
+        async def remove_account(platform: str, account_id: str, biz=Depends(self._require_business)):
+            msg = self.orch.account_mgr.remove_account(platform, account_id, biz["id"])
             ok = "disabled" in msg.lower() or "removed" in msg.lower()
             return {"ok": ok, "message": msg}
 
@@ -728,7 +807,7 @@ class WebDashboard:
             limit: int = 10
 
         @app.post("/api/reddit/search")
-        async def manual_search(body: ManualSearchModel, _=Depends(self._verify_token)):
+        async def manual_search(body: ManualSearchModel, biz=Depends(self._require_business)):
             """Search a subreddit for posts."""
             try:
                 accounts = self.orch.account_mgr.load_accounts("reddit")
@@ -766,7 +845,7 @@ class WebDashboard:
             redirect_uri: Optional[str] = None
 
         @app.post("/api/reddit/oauth/start")
-        async def reddit_oauth_start(body: OAuthStartModel, _=Depends(self._verify_token)):
+        async def reddit_oauth_start(body: OAuthStartModel, biz=Depends(self._require_business)):
             """Generate the Reddit authorization URL for a given account business_id and account_id."""
             cfg = _load_reddit_api_config()
             client_id = cfg.get("client_id", "")
@@ -921,7 +1000,7 @@ class WebDashboard:
 
 
         @app.get("/api/reddit/oauth/status")
-        async def reddit_oauth_status(_=Depends(self._verify_token)):
+        async def reddit_oauth_status(biz=Depends(self._require_business)):
             """Show which accounts have a refresh_token configured."""
             import yaml
             try:
@@ -933,9 +1012,11 @@ class WebDashboard:
                 accounts = accounts_cfg.get("accounts", [])
                 result = []
                 for acc in accounts:
-                    uname = acc.get("username", "")
+                    if acc.get("business_id") != biz["id"]:
+                        continue
+                    account_id = acc.get("account_id") or acc.get("username", "unknown")
                     has_token = bool(acc.get("refresh_token", ""))
-                    result.append({"username": uname, "has_refresh_token": has_token})
+                    result.append({"account_id": account_id, "has_refresh_token": has_token})
                 api_cfg = _load_reddit_api_config()
                 return {
                     "ok": True,
@@ -948,7 +1029,7 @@ class WebDashboard:
 
         # ── GET /api/insights ──────────────────────────────
         @app.get("/api/insights")
-        async def get_insights(_=Depends(self._verify_token)):
+        async def get_insights(biz=Depends(self._require_business)):
             try:
                 from core.ab_testing import ABTestingEngine
                 from core.learning_engine import LearningEngine
@@ -959,15 +1040,15 @@ class WebDashboard:
                 all_sent = []
                 for proj in getattr(self.orch, "projects", []):
                     pname = proj.get("project", {}).get("name", "")
-                    all_pt.extend(self.orch.db.get_post_type_stats(pname, days=30) or [])
-                    all_sent.extend(self.orch.db.get_sentiment_by_tone(pname, days=30) or [])
+                    all_pt.extend(self.orch.db.get_post_type_stats(pname, days=30, business_id=biz["id"]) or [])
+                    all_sent.extend(self.orch.db.get_sentiment_by_tone(pname, days=30, business_id=biz["id"]) or [])
                 insights["post_type_stats"] = [dict(r) for r in all_pt]
                 insights["sentiment"] = [dict(r) for r in all_sent]
                 ab = ABTestingEngine(self.orch.db)
                 exps = ab.get_active_experiments()
                 exp_list = []
                 for exp in (exps or []):
-                    results = self.orch.db.get_experiment_results(exp["id"])
+                    results = self.orch.db.get_experiment_results(exp["id"], business_id=biz["id"])
                     exp_list.append({
                         "name": exp["experiment_name"],
                         "variable": exp["variable"],
@@ -985,7 +1066,7 @@ class WebDashboard:
 
         # ── GET /api/schedule ──────────────────────────────
         @app.get("/api/schedule")
-        async def get_schedule(_=Depends(self._verify_token)):
+        async def get_schedule(biz=Depends(self._require_business)):
             jobs = []
             try:
                 for job in self.orch.scheduler.get_jobs():
@@ -1015,11 +1096,11 @@ class WebDashboard:
 
         # ── GET /api/opportunities ─────────────────────────
         @app.get("/api/opportunities")
-        async def get_opportunities(limit: int = Query(20, le=100), _=Depends(self._verify_token)):
+        async def get_opportunities(limit: int = Query(20, le=100), biz=Depends(self._require_business)):
             try:
                 rows = self.orch.db.conn.execute(
                     """SELECT * FROM opportunities
-                       WHERE status = 'pending'
+                       WHERE status = 'pending' AND business_id = ?
                        ORDER BY score DESC LIMIT ?""",
                     (limit,),
                 ).fetchall()
@@ -1032,10 +1113,10 @@ class WebDashboard:
         async def get_rejected_opportunities(
             hours: int = Query(24, le=168),
             limit: int = Query(50, le=200),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             try:
-                return self.orch.db.get_rejected_opportunities(hours=hours, limit=limit)
+                return self.orch.db.get_rejected_opportunities(hours=hours, limit=limit, business_id=biz["id"])
             except Exception as e:
                 return {"error": str(e)}
 
@@ -1045,19 +1126,18 @@ class WebDashboard:
             hours: int = Query(2, le=24),
             decision_type: str = Query("", description="Filter by type"),
             limit: int = Query(30, le=100),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             try:
                 return self.orch.db.get_recent_decisions(
-                    hours=hours, decision_type=decision_type, limit=limit,
-                )
+                    hours=hours, decision_type=decision_type, limit=limit, business_id=biz["id"])
             except Exception as e:
                 return {"error": str(e)}
 
         # ── GET /api/server ────────────────────────────────
         @app.get("/api/server")
         async def get_server_stats(_=Depends(self._verify_token)):
-            result = {}
+            result = {"scope": "global"}
             # CPU
             try:
                 load1, load5, load15 = os.getloadavg()
@@ -1113,7 +1193,7 @@ class WebDashboard:
 
         # ── GET /api/brain ─────────────────────────────────
         @app.get("/api/brain")
-        async def get_brain(_=Depends(self._verify_token)):
+        async def get_brain(biz=Depends(self._require_business)):
             """Agent intelligence data (mirrors TUI brain panel)."""
             result: Dict[str, Any] = {}
             try:
@@ -1135,7 +1215,7 @@ class WebDashboard:
                     pt_parts = []
                     for proj in self.orch.projects:
                         pname = proj.get("project", {}).get("name", "")
-                        pt_stats = self.orch.db.get_post_type_stats(pname, days=30)
+                        pt_stats = self.orch.db.get_post_type_stats(pname, days=30, business_id=biz["id"])
                         for pt in (pt_stats or [])[:3]:
                             pt_parts.append({"type": pt["post_type"], "avg_eng": round(pt["avg_engagement"], 1)})
                     result["post_type_top"] = pt_parts[:5]
@@ -1147,7 +1227,7 @@ class WebDashboard:
                     all_sent = []
                     for proj in self.orch.projects:
                         pname = proj.get("project", {}).get("name", "")
-                        sent = self.orch.db.get_sentiment_by_tone(pname, days=30)
+                        sent = self.orch.db.get_sentiment_by_tone(pname, days=30, business_id=biz["id"])
                         all_sent.extend(sent or [])
                     if all_sent:
                         avg = sum(s["avg_sentiment"] for s in all_sent) / len(all_sent)
@@ -1165,7 +1245,7 @@ class WebDashboard:
                         pname = proj.get("project", {}).get("name", "")
                         exps = self.orch.ab_testing.get_active_experiments(pname)
                         for exp in (exps or []):
-                            results_data = self.orch.db.get_experiment_results(exp["id"])
+                            results_data = self.orch.db.get_experiment_results(exp["id"], business_id=biz["id"])
                             ab_parts.append({
                                 "variable": exp["variable"],
                                 "variant_a": exp.get("variant_a", ""),
@@ -1210,7 +1290,7 @@ class WebDashboard:
                     friends = 0
                     for proj in self.orch.projects:
                         pname = proj.get("project", {}).get("name", "")
-                        rel_stats = self.orch.db.get_relationship_stats(pname)
+                        rel_stats = self.orch.db.get_relationship_stats(pname, business_id=biz["id"])
                         total_rels += sum(rel_stats.values())
                         friends += rel_stats.get("friend", 0) + rel_stats.get("advocate", 0)
                     result["relationships"] = {"total": total_rels, "friends": friends}
@@ -1256,10 +1336,10 @@ class WebDashboard:
 
         # ── GET /api/performance ───────────────────────────
         @app.get("/api/performance")
-        async def get_performance(_=Depends(self._verify_token)):
+        async def get_performance(biz=Depends(self._require_business)):
             """Performance scoring (mirrors TUI performance panel)."""
             try:
-                raw = self.orch.db.get_stats_summary(hours=24)
+                raw = self.orch.db.get_stats_summary(hours=24, business_id=biz["id"])
                 actions = raw.get("actions", {})
                 total_actions = sum(sum(t.values()) for t in actions.values())
 
@@ -1278,7 +1358,7 @@ class WebDashboard:
                     accs = self.orch.account_mgr.load_accounts(platform)
                     for acc in accs:
                         acc_total += 1
-                        recent = self.orch.db.get_recent_actions(hours=24, account=acc["username"], platform=platform, limit=1)
+                        recent = self.orch.db.get_recent_actions(hours=24, account=acc["username"], platform=platform, limit=1, business_id=biz["id"])
                         if recent:
                             acc_active += 1
                 usage_score = (acc_active / max(acc_total, 1)) * 20
@@ -1319,12 +1399,12 @@ class WebDashboard:
 
         # ── GET /api/minimaps ──────────────────────────────
         @app.get("/api/minimaps")
-        async def get_minimaps(_=Depends(self._verify_token)):
+        async def get_minimaps(biz=Depends(self._require_business)):
             """Reddit + Telegram activity minimaps."""
             result: Dict[str, Any] = {"reddit": [], "telegram": {"groups": []}}
             try:
                 # Reddit minimap
-                recent_reddit = self.orch.db.get_recent_actions(hours=24, platform="reddit", limit=200)
+                recent_reddit = self.orch.db.get_recent_actions(hours=24, platform="reddit", limit=200, business_id=biz["id"])
                 sub_counts: Dict[str, int] = {}
                 for a in (recent_reddit or []):
                     meta = a.get("metadata", "")
@@ -1352,7 +1432,7 @@ class WebDashboard:
                     try:
                         for proj in self.orch.projects[:1]:
                             pname = proj.get("project", {}).get("name", "")
-                            presence = self.orch.db.get_community_presence(pname)
+                            presence = self.orch.db.get_community_presence(pname, business_id=biz["id"])
                             for p in (presence or []):
                                 if p.get("subreddit") == sub_name:
                                     stage = p.get("stage", "new")
@@ -1367,7 +1447,7 @@ class WebDashboard:
                     })
 
                 # Telegram minimap
-                recent_telegram = self.orch.db.get_recent_actions(hours=24, platform="telegram", limit=200)
+                recent_telegram = self.orch.db.get_recent_actions(hours=24, platform="telegram", limit=200, business_id=biz["id"])
                 tg_group_counts: Dict[str, int] = {}
                 for a in (recent_telegram or []):
                     meta = a.get("metadata", "")
@@ -1387,7 +1467,7 @@ class WebDashboard:
 
         # ── GET /api/conversations ─────────────────────────
         @app.get("/api/conversations")
-        async def get_conversations(limit: int = Query(30, le=100), _=Depends(self._verify_token)):
+        async def get_conversations(limit: int = Query(30, le=100), biz=Depends(self._require_business)):
             """DM conversations + Telegram alerts."""
             result: Dict[str, Any] = {"dms": [], "alerts": []}
             try:
@@ -1418,7 +1498,7 @@ class WebDashboard:
 
         # ── GET /api/history ───────────────────────────────
         @app.get("/api/history")
-        async def get_history(hours: int = Query(168, le=720), _=Depends(self._verify_token)):
+        async def get_history(hours: int = Query(168, le=720), biz=Depends(self._require_business)):
             """Action history aggregated by hour for timeline charts."""
             try:
                 since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
@@ -1450,7 +1530,7 @@ class WebDashboard:
 
         # ── POST /api/control/* ────────────────────────────
         @app.post("/api/control/scan")
-        async def control_scan(_=Depends(self._verify_token)):
+        async def control_scan(biz=Depends(self._require_business)):
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
             from core.job_coordinator import AlreadyRunning
@@ -1464,26 +1544,26 @@ class WebDashboard:
             return {"ok": True, "message": "Scan started"}
 
         @app.post("/api/control/learn")
-        async def control_learn(_=Depends(self._verify_token)):
+        async def control_learn(biz=Depends(self._require_business)):
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
             threading.Thread(target=self.orch._learn, daemon=True).start()
             return {"ok": True, "message": "Learning started"}
 
         @app.post("/api/control/pause")
-        async def control_pause(_=Depends(self._verify_token)):
+        async def control_pause(biz=Depends(self._require_business)):
             self.orch._paused = True
             return {"ok": True, "paused": True}
 
         @app.post("/api/control/resume")
-        async def control_resume(_=Depends(self._verify_token)):
+        async def control_resume(biz=Depends(self._require_business)):
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active — use emergency-reset first"}
             self.orch._paused = False
             return {"ok": True, "paused": False}
 
         @app.post("/api/control/emergency-stop")
-        async def emergency_stop(_=Depends(self._verify_token)):
+        async def emergency_stop(biz=Depends(self._require_business)):
             self._emergency_stopped = True
             self.orch._paused = True
             logger.critical("EMERGENCY STOP triggered via web dashboard")
@@ -1495,7 +1575,7 @@ class WebDashboard:
             return {"ok": True, "message": "Emergency stop — all jobs paused, scheduler frozen"}
 
         @app.post("/api/control/emergency-reset")
-        async def emergency_reset(_=Depends(self._verify_token)):
+        async def emergency_reset(biz=Depends(self._require_business)):
             self._emergency_stopped = False
             self.orch._paused = False
             logger.warning("Emergency stop RESET via web dashboard")
@@ -1506,7 +1586,7 @@ class WebDashboard:
             return {"ok": True, "message": "Emergency reset — bot resuming"}
 
         @app.post("/api/control/act")
-        async def control_act(_=Depends(self._verify_token)):
+        async def control_act(biz=Depends(self._require_business)):
             """Act on the best pending opportunity."""
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
@@ -1521,7 +1601,7 @@ class WebDashboard:
             return {"ok": True, "message": "Act cycle started"}
 
         @app.post("/api/control/engage")
-        async def control_engage(_=Depends(self._verify_token)):
+        async def control_engage(biz=Depends(self._require_business)):
             """Run organic engagement (upvotes, likes, follows)."""
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
@@ -1529,7 +1609,7 @@ class WebDashboard:
             return {"ok": True, "message": "Engagement started"}
 
         @app.post("/api/control/auto-improve")
-        async def control_auto_improve(_=Depends(self._verify_token)):
+        async def control_auto_improve(biz=Depends(self._require_business)):
             """Run auto-improvement cycle."""
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
@@ -1537,7 +1617,7 @@ class WebDashboard:
             return {"ok": True, "message": "Auto-improve started"}
 
         @app.post("/api/control/reload-config")
-        async def control_reload_config(_=Depends(self._verify_token)):
+        async def control_reload_config(biz=Depends(self._require_business)):
             """Reload projects and accounts config from YAML files."""
             try:
                 self.orch.business_mgr.reload()
@@ -1548,16 +1628,16 @@ class WebDashboard:
                 return {"ok": False, "error": str(e)}
 
         @app.post("/api/control/cleanup")
-        async def control_cleanup(_=Depends(self._verify_token)):
+        async def control_cleanup(biz=Depends(self._require_business)):
             try:
-                self.orch.db.force_maintenance()
+                self.orch.db.force_maintenance(business_id=biz["id"])
                 gc.collect()
                 return {"ok": True, "message": "Cleanup + GC done"}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
         @app.post("/api/control/manage-communities")
-        async def control_manage_communities(_=Depends(self._verify_token)):
+        async def control_manage_communities(biz=Depends(self._require_business)):
             try:
                 import threading
                 threading.Thread(target=self.orch._manage_communities_safe, daemon=True).start()
@@ -1566,7 +1646,7 @@ class WebDashboard:
                 return {"ok": False, "error": str(e)}
 
         @app.post("/api/control/animate-hubs")
-        async def control_animate_hubs(_=Depends(self._verify_token)):
+        async def control_animate_hubs(biz=Depends(self._require_business)):
             try:
                 import threading
                 threading.Thread(target=self.orch._animate_hubs_safe, daemon=True).start()
@@ -1575,7 +1655,7 @@ class WebDashboard:
                 return {"ok": False, "error": str(e)}
 
         @app.post("/api/control/scan-takeover")
-        async def control_scan_takeover(_=Depends(self._verify_token)):
+        async def control_scan_takeover(biz=Depends(self._require_business)):
             try:
                 import threading
                 threading.Thread(target=self.orch._scan_takeover_targets_safe, daemon=True).start()
@@ -1584,7 +1664,7 @@ class WebDashboard:
                 return {"ok": False, "error": str(e)}
 
         @app.post("/api/control/research")
-        async def control_research(_=Depends(self._verify_token)):
+        async def control_research(biz=Depends(self._require_business)):
             try:
                 import threading
                 threading.Thread(target=self.orch._research_safe, daemon=True).start()
@@ -1594,16 +1674,19 @@ class WebDashboard:
 
         # ── GET /api/cookies — cookie status for all accounts ─
         @app.get("/api/cookies")
-        async def get_cookies_status(_=Depends(self._verify_token)):
+        async def get_cookies_status(biz=Depends(self._require_business)):
             """Get cookie status for all accounts."""
             result = []
             for platform in ("reddit",):
                 accounts = self.orch.account_mgr.load_accounts(platform)
                 for acc in accounts:
+                    if acc.get("business_id") != biz["id"]:
+                        continue
+                    account_id = acc.get("account_id") or acc.get("username", "unknown")
                     cookies_file = acc.get("cookies_file", "")
                     has_cookies = os.path.exists(cookies_file) if cookies_file else False
-                    cookie_info = {"platform": platform, "username": acc["username"],
-                                   "cookies_file": cookies_file, "has_cookies": has_cookies}
+                    cookie_info = {"platform": platform, "account_id": account_id,
+                                   "has_cookies": has_cookies}
                     if has_cookies:
                         try:
                             stat = os.stat(cookies_file)
@@ -1625,7 +1708,7 @@ class WebDashboard:
 
         # ── POST /api/cookies/paste — paste cookies from browser ─
         @app.post("/api/cookies/paste")
-        async def paste_cookies(body: PasteCookiesRequest, _=Depends(self._verify_token)):
+        async def paste_cookies(body: PasteCookiesRequest, biz=Depends(self._require_business)):
             """Paste cookies from browser console (document.cookie output)."""
             platform = body.platform
             username = body.username
@@ -1725,7 +1808,7 @@ class WebDashboard:
 
         # ── DELETE /api/cookies — delete cookies for an account ─
         @app.delete("/api/cookies/{platform}/{username}")
-        async def delete_cookies(platform: str, username: str, _=Depends(self._verify_token)):
+        async def delete_cookies(platform: str, username: str, biz=Depends(self._require_business)):
             """Delete cookie file for an account (forces re-login)."""
             accounts = self.orch.account_mgr.load_accounts(platform)
             for acc in accounts:
@@ -1746,14 +1829,13 @@ class WebDashboard:
             action_type: Optional[str] = Query(None),
             hours: int = Query(24, le=168),
             limit: int = Query(50, le=500),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Search actions with filters."""
             try:
                 rows = self.orch.db.get_recent_actions(
                     hours=hours, limit=limit,
-                    account=account, platform=platform,
-                )
+                    account=account, platform=platform, business_id=biz["id"])
                 results = [dict(r) for r in (rows or [])]
                 if project:
                     results = [r for r in results if r.get("project") == project]
@@ -1768,7 +1850,7 @@ class WebDashboard:
         async def export_actions_csv(
             hours: int = Query(24, le=720),
             platform: Optional[str] = Query(None),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Export actions as CSV."""
             from fastapi.responses import StreamingResponse
@@ -1776,7 +1858,7 @@ class WebDashboard:
             import io
 
             try:
-                rows = self.orch.db.get_recent_actions(hours=hours, limit=10000, platform=platform)
+                rows = self.orch.db.get_recent_actions(hours=hours, limit=10000, platform=platform, business_id=biz["id"])
                 actions = [dict(r) for r in (rows or [])]
 
                 output = io.StringIO()
@@ -1789,7 +1871,7 @@ class WebDashboard:
                 return StreamingResponse(
                     iter([output.getvalue()]),
                     media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=milo_actions_{hours}h.csv"},
+                    headers={"Content-Disposition": f"attachment; filename=milo_actions_{biz["id"]}_{hours}h.csv"},
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
@@ -1798,7 +1880,7 @@ class WebDashboard:
         @app.get("/api/export/opportunities")
         async def export_opportunities_csv(
             status: str = Query("pending"),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Export opportunities as CSV."""
             from fastapi.responses import StreamingResponse
@@ -1807,11 +1889,11 @@ class WebDashboard:
 
             try:
                 if status == "pending":
-                    rows = self.orch.db.get_pending_opportunities(limit=5000)
+                    rows = self.orch.db.get_pending_opportunities(limit=5000, business_id=biz["id"])
                 else:
                     rows = self.orch.db.conn.execute(
-                        "SELECT * FROM opportunities WHERE status = ? ORDER BY timestamp DESC LIMIT 5000",
-                        (status,),
+                        "SELECT * FROM opportunities WHERE status = ? AND business_id = ? ORDER BY timestamp DESC LIMIT 5000",
+                        (status, biz["id"]),
                     ).fetchall()
                     rows = [dict(r) for r in rows]
 
@@ -1825,14 +1907,14 @@ class WebDashboard:
                 return StreamingResponse(
                     iter([output.getvalue()]),
                     media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=milo_opportunities_{status}.csv"},
+                    headers={"Content-Disposition": f"attachment; filename=milo_opportunities_{biz["id"]}_{status}.csv"},
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
         # ── GET /api/settings — view current settings ────
         @app.get("/api/settings")
-        async def get_settings(_=Depends(self._verify_token)):
+        async def get_settings(biz=Depends(self._require_business)):
             """Return current settings (safe subset)."""
             try:
                 settings = self.orch.settings
@@ -1856,7 +1938,7 @@ class WebDashboard:
 
         # ── PUT /api/settings — update settings ──────────
         @app.put("/api/settings")
-        async def update_settings(request: Request, _=Depends(self._verify_token)):
+        async def update_settings(request: Request, biz=Depends(self._require_business)):
             """Update settings (limited keys)."""
             try:
                 import yaml
@@ -1888,14 +1970,13 @@ class WebDashboard:
 
         # ── GET /api/accounts/{platform}/{username}/health — detail ─
         @app.get("/api/accounts/{platform}/{username}/health")
-        async def get_account_health(platform: str, username: str, _=Depends(self._verify_token)):
+        async def get_account_health(platform: str, username: str, biz=Depends(self._require_business)):
             """Detailed health info for one account."""
             try:
                 key = f"{platform}:{username}"
                 status = self.orch.account_mgr._statuses.get(key, "healthy")
                 recent = self.orch.db.get_recent_actions(
-                    hours=24, account=username, platform=platform, limit=100,
-                )
+                    hours=24, account=username, platform=platform, limit=100, business_id=biz["id"])
                 actions = [dict(r) for r in (recent or [])]
                 types = {}
                 for a in actions:
@@ -1934,12 +2015,12 @@ class WebDashboard:
 
         # ── GET /api/summary — high-level dashboard summary ─
         @app.get("/api/summary")
-        async def get_summary(_=Depends(self._verify_token)):
+        async def get_summary(biz=Depends(self._require_business)):
             """Quick summary for dashboard header."""
             try:
-                actions_24h = self.orch.db.get_recent_actions(hours=24, limit=10000)
+                actions_24h = self.orch.db.get_recent_actions(hours=24, limit=10000, business_id=biz["id"])
                 actions = [dict(r) for r in (actions_24h or [])]
-                pending = self.orch.db.get_pending_opportunities(limit=1)
+                pending = self.orch.db.get_pending_opportunities(limit=1, business_id=biz["id"])
 
                 by_platform = {}
                 by_project = {}
@@ -1966,7 +2047,7 @@ class WebDashboard:
 
         # ── GET /api/accounts/reddit/performance — all Reddit accounts perf ──
         @app.get("/api/accounts/reddit/performance")
-        async def get_reddit_accounts_performance(_=Depends(self._verify_token)):
+        async def get_reddit_accounts_performance(biz=Depends(self._require_business)):
             """Per-account Reddit performance overview."""
             result = []
             try:
@@ -1980,8 +2061,7 @@ class WebDashboard:
 
                     # Actions breakdown (24h)
                     recent = self.orch.db.get_recent_actions(
-                        hours=24, account=username, platform="reddit", limit=500,
-                    )
+                        hours=24, account=username, platform="reddit", limit=500, business_id=biz["id"])
                     actions = [dict(r) for r in (recent or [])]
                     types = {}
                     subreddits_acted = set()
@@ -2003,8 +2083,7 @@ class WebDashboard:
 
                     # Actions last 4h (rotation window)
                     recent_4h = self.orch.db.get_action_count(
-                        hours=4, account=username, platform="reddit"
-                    )
+                        hours=4, account=username, platform="reddit", business_id=biz["id"])
 
                     # Cookie freshness
                     cookie_file = acc.get("cookies_file", "")
@@ -2060,7 +2139,7 @@ class WebDashboard:
         # ── Community Management Endpoints ────────────────
 
         @app.get("/api/communities")
-        async def get_communities(_=Depends(self._verify_token)):
+        async def get_communities(biz=Depends(self._require_business)):
             """Get all owned/managed communities with status."""
             try:
                 communities = self.orch.community_manager.get_all_managed_communities()
@@ -2069,7 +2148,7 @@ class WebDashboard:
                 return {"error": str(e), "communities": []}
 
         @app.get("/api/communities/{subreddit}")
-        async def get_community_detail(subreddit: str, _=Depends(self._verify_token)):
+        async def get_community_detail(subreddit: str, biz=Depends(self._require_business)):
             """Get detailed info for a specific community."""
             try:
                 hub = self.orch.hub_manager.get_hub(subreddit)
@@ -2081,7 +2160,7 @@ class WebDashboard:
                 return {"error": str(e)}
 
         @app.get("/api/takeover/targets")
-        async def get_takeover_targets(_=Depends(self._verify_token)):
+        async def get_takeover_targets(biz=Depends(self._require_business)):
             """Get recent takeover target scans."""
             try:
                 # Return cached results from last scan
@@ -2094,7 +2173,7 @@ class WebDashboard:
                 return {"error": str(e), "targets": []}
 
         @app.get("/api/takeover/requests")
-        async def get_takeover_requests(_=Depends(self._verify_token)):
+        async def get_takeover_requests(biz=Depends(self._require_business)):
             """Get pending r/redditrequest submissions."""
             try:
                 requests = self.orch.community_manager.get_pending_requests()
@@ -2106,7 +2185,7 @@ class WebDashboard:
         @app.get("/api/heatmap")
         async def get_heatmap(
             days: int = Query(28, le=90),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Activity heatmap: actions by day-of-week and hour."""
             try:
@@ -2130,26 +2209,26 @@ class WebDashboard:
         @app.get("/api/funnel")
         async def get_funnel(
             hours: int = Query(24, le=168),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Opportunity funnel: discovered → pending → acted → success."""
             try:
                 since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
                 # Total opportunities discovered
                 row = self.orch.db.conn.execute(
-                    "SELECT COUNT(*) as c FROM opportunities WHERE timestamp > ?",
+                    "SELECT COUNT(*) as c FROM opportunities WHERE timestamp > ? AND business_id = ?",
                     (since,),
                 ).fetchone()
                 total_opps = row["c"] if row else 0
                 # Pending
                 row = self.orch.db.conn.execute(
-                    "SELECT COUNT(*) as c FROM opportunities WHERE status='pending' AND timestamp > ?",
+                    "SELECT COUNT(*) as c FROM opportunities WHERE status='pending' AND timestamp > ? AND business_id = ?",
                     (since,),
                 ).fetchone()
                 pending = row["c"] if row else 0
                 # Acted on (have matching actions)
                 row = self.orch.db.conn.execute(
-                    "SELECT COUNT(*) as c FROM actions WHERE timestamp > ? AND success = 1",
+                    "SELECT COUNT(*) as c FROM actions WHERE timestamp > ? AND success = 1 AND business_id = ?",
                     (since,),
                 ).fetchone()
                 acted = row["c"] if row else 0
@@ -2174,7 +2253,7 @@ class WebDashboard:
 
         # ── GET /api/network ──────────────────────────────
         @app.get("/api/network")
-        async def get_network(_=Depends(self._verify_token)):
+        async def get_network(biz=Depends(self._require_business)):
             """Network graph: accounts, relationships, subreddits."""
             try:
                 nodes = []
@@ -2270,7 +2349,7 @@ class WebDashboard:
         async def get_intel_subreddits(
             project: str = Query(""),
             limit: int = Query(30, le=100),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Subreddit intelligence data."""
             try:
@@ -2294,7 +2373,7 @@ class WebDashboard:
         async def get_intel_trends(
             project: str = Query(""),
             hours: int = Query(72, le=336),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Subreddit trend snapshots (themes, questions, hot posts)."""
             try:
@@ -2333,7 +2412,7 @@ class WebDashboard:
             project: str = Query(""),
             category: str = Query(""),
             limit: int = Query(50, le=200),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Knowledge base entries (trends, news, talking points, strategy rules)."""
             try:
@@ -2364,7 +2443,7 @@ class WebDashboard:
             project: str = Query(""),
             status: str = Query(""),
             limit: int = Query(30, le=100),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """AI-discovered subreddits and keywords."""
             try:
@@ -2393,7 +2472,7 @@ class WebDashboard:
         @app.get("/api/intel/time-perf")
         async def get_intel_time_perf(
             project: str = Query(""),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Best posting times heatmap (7x24 grid)."""
             try:
@@ -2420,7 +2499,7 @@ class WebDashboard:
         async def get_intel_failures(
             project: str = Query(""),
             limit: int = Query(20, le=50),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Content failure patterns and avoidance rules."""
             try:
@@ -2442,7 +2521,7 @@ class WebDashboard:
         async def get_intel_sentiment(
             project: str = Query(""),
             days: int = Query(30, le=90),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Reply sentiment aggregated by subreddit and tone."""
             try:
@@ -2488,7 +2567,7 @@ class WebDashboard:
         @app.get("/api/intel/radar")
         async def get_intel_radar(
             project: str = Query(""),
-            _=Depends(self._verify_token),
+            biz=Depends(self._require_business),
         ):
             """Composite radar data for the Topic Universe visualization."""
             try:

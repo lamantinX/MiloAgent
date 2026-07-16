@@ -522,102 +522,105 @@ class AccountManager:
     def add_account(
         self,
         platform: str,
-        username: str,
-        password: str,
-        email: str = "",
-        projects: Optional[List[str]] = None,
-        persona: str = "helpful_casual",
-    ) -> str:
+        account_id: str,
+        business_id: str,
+        account_data: dict,
+    ) -> dict:
         """Add a new account to the platform config YAML.
-
-        Returns status message.
+        Persists safely to .local.yaml using atomic write and restrictive permissions.
+        Returns a redacted DTO.
         """
         if platform == "reddit":
             base = f"{self.config_dir}/reddit_accounts"
         elif platform == "twitter":
             base = f"{self.config_dir}/twitter_accounts"
+        elif platform == "telegram":
+            base = f"{self.config_dir}/telegram_accounts"
         else:
-            return f"Unknown platform: {platform}"
+            raise ValueError(f"Unknown platform: {platform}")
 
-        # Always write to .local.yaml when it exists (server config), else .yaml
         local_path = f"{base}.local.yaml"
-        default_path = f"{base}.yaml"
-        path = local_path if os.path.exists(local_path) else default_path
+        # Since it says strictly persist ONLY to ignored local YAML:
+        path = local_path 
 
-        # Load existing config
+        import yaml, os, stat, tempfile
         try:
             with open(path) as f:
                 data = yaml.safe_load(f) or {}
         except FileNotFoundError:
             data = {}
-
-        accounts = data.get("accounts", [])
-
-        # Check if username already exists
+        accounts = data.setdefault("accounts", [])
+        
+        # Check if account_id already exists
         for acc in accounts:
-            if acc.get("username", "").lower() == username.lower():
-                return f"Account @{username} already exists on {platform}"
+            if acc.get("account_id") == account_id:
+                raise ValueError(f"Account id {account_id} already exists")
 
-        # Build account entry — cookie file uses username (matches paste endpoint)
-        cookie_file = f"data/cookies/{platform}_{username}.json"
-
+        # Create account record
+        record = {
+            "account_id": account_id,
+            "business_id": business_id,
+            "persona": account_data.get("persona", "helpful_casual"),
+            "assigned_projects": account_data.get("projects", []),
+            "enabled": account_data.get("enabled", True),
+        }
+        
         if platform == "reddit":
-            new_account = {
+            username = account_data["username"]
+            record.update({
                 "username": username,
-                "password": password,
-                "email": email,
+                "password": account_data["password"],
+                "email": account_data.get("email", ""),
                 "client_id": "",
                 "client_secret": "",
-                "user_agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36"
-                ),
-                "cookies_file": cookie_file,
-                "enabled": True,
-                "persona": persona,
-                "assigned_projects": projects if projects else [],
-                "cooldown_minutes": 15,
-                "max_actions_per_hour": 4,
-            }
-        else:  # twitter
-            new_account = {
+                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "cookies_file": f"data/cookies/reddit_{account_id}.json",
+            })
+        elif platform == "telegram":
+            record.update({
+                "api_id": account_data["api_id"],
+                "api_hash": account_data["api_hash"],
+                "account_type": "user",
+                "phone": account_data.get("phone"),
+                "auth_status": "not_authorized",
+                "session_file": f"data/sessions/telegram_{business_id}_{account_id}.session",
+                "enabled": False, # Plan 009: keep enabled = False
+            })
+        elif platform == "twitter":
+            username = account_data["username"]
+            record.update({
                 "username": username,
-                "email": email,
-                "password": password,
-                "totp_secret": "",
-                "cookies_file": cookie_file,
-                "enabled": True,
-                "persona": persona,
-                "assigned_projects": projects if projects else [],
-                "cooldown_minutes": 20,
-                "max_actions_per_hour": 3,
-            }
+                "password": account_data["password"],
+                "email": account_data.get("email", ""),
+                "cookies_file": f"data/cookies/twitter_{account_id}.json",
+            })
 
-        accounts.append(new_account)
-        data["accounts"] = accounts
-
-        # Preserve other top-level keys
-        if platform == "reddit" and "auth_mode" not in data:
-            data["auth_mode"] = "web"
-        if platform == "reddit" and "default_cooldown_per_subreddit_minutes" not in data:
-            data["default_cooldown_per_subreddit_minutes"] = 60
-
-        # Ensure cookies directory exists
-        os.makedirs("data/cookies", exist_ok=True)
-
-        # Write back
-        with open(path, "w") as f:
+        accounts.append(record)
+        
+        # Atomic replace and restrictive permissions
+        fd, temp_path = tempfile.mkstemp(dir=str(self.config_dir), suffix=".yaml")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            
+        try:
+            os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass
+        os.replace(temp_path, path)
 
-        logger.info(f"Added {platform} account: @{username}")
-        return f"Added @{username} to {platform}. Cookie file: {cookie_file}"
+        # Build redacted DTO
+        dto = {k: v for k, v in record.items() if k not in ["password", "api_hash", "client_secret"]}
+        dto["has_cookies"] = False
+        return dto
 
-    def remove_account(self, platform: str, username: str) -> str:
+    def remove_account(self, platform: str, account_id_or_username: str, business_id: str = None) -> str:
         """Disable an account in the config (sets enabled: false)."""
         if platform == "reddit":
             base = f"{self.config_dir}/reddit_accounts"
         elif platform == "twitter":
             base = f"{self.config_dir}/twitter_accounts"
+        elif platform == "telegram":
+            base = f"{self.config_dir}/telegram_accounts"
         else:
             return f"Unknown platform: {platform}"
 
@@ -634,7 +637,17 @@ class AccountManager:
         accounts = data.get("accounts", [])
         found = False
         for acc in accounts:
-            if acc.get("username", "").lower() == username.lower():
+            # Check by account_id first
+            match = False
+            if "account_id" in acc and acc["account_id"] == account_id_or_username:
+                if not business_id or acc.get("business_id") == business_id:
+                    match = True
+            # Fallback to username if legacy
+            elif acc.get("username", "").lower() == account_id_or_username.lower():
+                if not business_id or acc.get("business_id") == business_id:
+                    match = True
+            
+            if match:
                 acc["enabled"] = False
                 found = True
                 break
