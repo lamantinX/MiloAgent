@@ -1414,7 +1414,14 @@ h1{{color:#ff6b35}}p{{color:#a0a0c0}}</style></head>
         async def control_scan(_=Depends(self._verify_token)):
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
-            threading.Thread(target=self.orch._scan_all_safe, daemon=True).start()
+            from core.job_coordinator import AlreadyRunning
+            from fastapi import HTTPException
+            try:
+                self.orch.jobs.run_background_with_timeout(
+                    "SCAN_ALL", None, 400, self.orch._scan_all
+                )
+            except AlreadyRunning:
+                raise HTTPException(status_code=409, detail="Already running")
             return {"ok": True, "message": "Scan started"}
 
         @app.post("/api/control/learn")
@@ -1464,7 +1471,14 @@ h1{{color:#ff6b35}}p{{color:#a0a0c0}}</style></head>
             """Act on the best pending opportunity."""
             if self._emergency_stopped:
                 return {"ok": False, "error": "Emergency stop active"}
-            threading.Thread(target=self.orch._act_on_best_safe, daemon=True).start()
+            from core.job_coordinator import AlreadyRunning
+            from fastapi import HTTPException
+            try:
+                self.orch.jobs.run_background_with_timeout(
+                    "ACT_BEST", None, 150, self.orch._act_on_best
+                )
+            except AlreadyRunning:
+                raise HTTPException(status_code=409, detail="Already running")
             return {"ok": True, "message": "Act cycle started"}
 
         @app.post("/api/control/engage")

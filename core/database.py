@@ -861,6 +861,18 @@ class Database:
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    
+    def claim_opportunity(self, opportunity_id: int) -> bool:
+        """
+        Atomically claims a pending opportunity.
+        Returns True if the claim was successful, False if it was already claimed or does not exist.
+        """
+        cursor = self._execute_write(
+            "UPDATE opportunities SET status = 'claimed' WHERE id = ? AND status = 'pending'",
+            (opportunity_id,)
+        )
+        return cursor.rowcount > 0
+
     def update_opportunity_status(
         self, target_id: str, status: str, rejection_reason: str = "",
     ):
