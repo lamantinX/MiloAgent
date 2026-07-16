@@ -189,21 +189,77 @@ class AccountManager:
             local_path = path[:-5] + ".local.yaml"
             if os.path.exists(local_path):
                 path = local_path
-
         try:
             with open(path) as f:
                 data = yaml.safe_load(f) or {}
+
+            from core.business_manager import BusinessManager
+            biz_mgr = BusinessManager()
+
             accounts = data.get("accounts", [])
             result = []
-            for a in accounts:
-                if not a.get("enabled", True):
+            seen_ids = set()
+
+            for raw_a in accounts:
+                if not raw_a.get("enabled", True):
                     continue
-                identifier = a.get("username") or a.get("phone", "")
+
+                identifier = raw_a.get("username") or raw_a.get("phone", "")
                 if identifier.startswith("YOUR_") or identifier.startswith("your_"):
                     continue
                 # Skip obvious placeholder accounts
-                if identifier in ("your_reddit_username", "your_twitter_username"):
+                if identifier in ("your_reddit_username", "your_twitter_username", "second_account"):
                     continue
+
+                a = dict(raw_a)
+                
+                # Validation checks
+                account_id = a.get("account_id")
+                business_id = a.get("business_id")
+                
+                if not account_id:
+                    logger.warning("Account missing account_id, skipped")
+                    continue
+                
+                if account_id in seen_ids:
+                    logger.warning(f"Duplicate account_id {account_id}, skipped")
+                    continue
+                    
+                if not business_id:
+                    logger.warning(f"Account {account_id} missing business_id, skipped")
+                    continue
+                    
+                biz = biz_mgr.get_business(business_id)
+                if not biz:
+                    logger.warning(f"Account {account_id} references unknown business {business_id}")
+                    continue
+                    
+                # Validate products
+                assigned_products = a.get("assigned_products", []) or a.get("assigned_projects", [])
+                valid_prods = []
+                prod_error = False
+                for pid in assigned_products:
+                    prod = biz_mgr.get_project(pid)
+                    if not prod:
+                        logger.warning(f"Account {account_id} references unknown product {pid}")
+                        prod_error = True
+                        break
+                    
+                    prod_biz = prod.get("project", {}).get("business_id")
+                    if not prod_biz:
+                        prod_biz = prod.get("business_id")
+                    if prod_biz != business_id:
+                        logger.warning(f"Account {account_id} references cross-business product {pid}")
+                        prod_error = True
+                        break
+                    valid_prods.append(pid)
+                
+                if prod_error:
+                    continue
+                
+                seen_ids.add(account_id)
+                a["assigned_products"] = valid_prods
+
                 # Normalize: ensure 'username' key is set for telegram accounts
                 if platform == "telegram" and not a.get("username"):
                     a["username"] = a.get("phone", "unknown")
@@ -222,119 +278,65 @@ class AccountManager:
             if self._statuses.get(key) == self.COOLDOWN:
                 self._statuses[key] = self.HEALTHY
 
-    def get_next_account(self, platform: str, project: Optional[str] = None) -> Optional[Dict]:
+    def get_next_account(self, platform: str, business_id: str, product_id: Optional[str] = None) -> Optional[Dict]:
         """Get the next available (healthy, not on cooldown) account.
-
         Uses round-robin rotation: never picks the same account twice in a row,
         then falls back to LRU (fewest actions in 4h) as tiebreaker.
         Thread-safe via self._lock.
-
-        If project is specified, prefers accounts assigned to that project.
-        Falls back to all accounts if none are assigned to the project.
         """
         accounts = self.load_accounts(platform)
         if not accounts:
             return None
-
         with self._lock:
-            # Periodically clean expired cooldowns
             self._cleanup_expired()
-
-            # Filter out cooldown/banned accounts
             available = []
             for acc in accounts:
-                key = f"{platform}:{acc['username']}"
+                if acc.get("business_id") != business_id:
+                    continue
+                # Enforce product routing
+                if product_id:
+                    has_prod = product_id in acc.get("assigned_products", [])
+                    all_prod = acc.get("all_products", False)
+                    if not has_prod and not all_prod:
+                        continue
+                
+                key = acc["account_id"]
                 status = self._statuses.get(key, self.HEALTHY)
-
                 if status == self.BANNED:
                     continue
-
                 if key in self._cooldowns:
                     if datetime.utcnow() < self._cooldowns[key]:
                         continue
                     else:
                         del self._cooldowns[key]
                         self._statuses[key] = self.HEALTHY
-
                 available.append(acc)
 
-            # Skip accounts without cookie files (can't authenticate)
+            # Skip accounts without cookie files or sessions
             if platform == "reddit":
                 with_cookies = [a for a in available if os.path.exists(a.get("cookies_file", ""))]
                 if with_cookies:
                     available = with_cookies
-
+                
             if not available:
-                logger.warning(f"No available {platform} accounts")
+                logger.warning(f"No available {platform} accounts for business '{business_id}' and product '{product_id}'")
                 return None
 
-            # Filter by project if specified -- only consider accounts assigned to this project
-            if project:
-                project_accounts = [
-                    a for a in available
-                    if project in (a.get("assigned_projects") or [])
-                ]
-                if project_accounts:
-                    available = project_accounts
-                # else fall back to all available accounts
+            # Sort by least recently used
+            available.sort(key=lambda a: self._last_used.get(a["account_id"], datetime.min))
 
-            # Karma gate: for write operations, prefer accounts with sufficient karma
-            # (Reddit CAPTCHAs low-karma accounts aggressively for write ops)
-            if platform == "reddit":
-                total_before = len(available)
-                karma_ok = [a for a in available if self.is_karma_sufficient(a["username"])]
-                if karma_ok:
-                    available = karma_ok
-                    if len(karma_ok) < total_before:
-                        logger.debug(f"Karma gate: {len(karma_ok)}/{total_before} accounts passed (karma>={self.MIN_KARMA_WRITE})")
-                # else: all unknown karma, proceed (don't block if cache empty)
+            # Pick the least recently used, or round robin
+            best = available[0]
+            for a in available:
+                if self._rotation_index.get(f"{platform}:{business_id}") != a["account_id"]:
+                    best = a
+                    break
 
-            # True round-robin: rotate through ALL available accounts fairly
-            # Step 1: advance the rotation index
-            idx = self._rotation_index.get(platform, -1) + 1
-            if idx >= len(available):
-                idx = 0
-            self._rotation_index[platform] = idx
-
-            # Step 2: pick account at current index
-            best = available[idx]
-
-            # Step 3: fairness correction — if selected account has way more
-            # actions than least-used, switch (single batch query, not N+1)
-            if len(available) > 1:
-                try:
-                    best_count = self.db.get_action_count(
-                        hours=4, account=best["username"], platform=platform
-                    )
-                    if best_count > 2:  # Only check others if best has significant activity
-                        min_acc = min(
-                            available,
-                            key=lambda a: self.db.get_action_count(
-                                hours=4, account=a["username"], platform=platform
-                            ),
-                        )
-                        min_count = self.db.get_action_count(
-                            hours=4, account=min_acc["username"], platform=platform
-                        )
-                        if best_count > min_count + 2:
-                            best = min_acc
-                            for i, acc in enumerate(available):
-                                if acc["username"] == best["username"]:
-                                    self._rotation_index[platform] = i
-                                    break
-                except Exception:
-                    pass  # DB error: use round-robin pick
-
-            if best:
-                self._last_used[platform] = best["username"]
-                logger.debug(
-                    f"Account rotation [{platform}]: picked {best['username']} "
-                    f"(index {self._rotation_index.get(platform, 0)}/{len(available)})"
-                )
-
-        return best
-
-    def get_account_by_username(self, platform: str, username: str) -> Optional[Dict]:
+            best_key = best["account_id"]
+            self._last_used[best["account_id"]] = datetime.utcnow()
+            self._rotation_index[f"{platform}:{business_id}"] = best["account_id"]
+            return best
+    def get_account(self, platform: str, business_id: str, account_id: str) -> Optional[Dict]:
         """Get a specific account by username (if healthy and not on cooldown)."""
         accounts = self.load_accounts(platform)
         for acc in accounts:
@@ -350,19 +352,19 @@ class AccountManager:
                 return acc
         return None
 
-    def update_karma_cache(self, username: str, karma: int):
+    def update_karma_cache(self, account_id: str, karma: int):
         """Store fresh karma value for an account."""
         self._karma_cache[username] = (karma, time.time())
         logger.debug(f"Karma cache updated: {username} = {karma}")
 
-    def get_cached_karma(self, username: str) -> Optional[int]:
+    def get_cached_karma(self, account_id: str) -> Optional[int]:
         """Return cached karma if fresh (< 12h), else None."""
         entry = self._karma_cache.get(username)
         if entry and (time.time() - entry[1]) < self.KARMA_CACHE_TTL:
             return entry[0]
         return None
 
-    def is_karma_sufficient(self, username: str) -> bool:
+    def is_karma_sufficient(self, account_id: str) -> bool:
         """Check if account has enough karma for write operations.
 
         Returns True if karma is sufficient OR if karma is unknown (cache miss).
@@ -373,7 +375,7 @@ class AccountManager:
             return True  # Unknown karma: don't block
         return karma >= self.MIN_KARMA_WRITE
 
-    def get_account_tier(self, username: str) -> dict:
+    def get_account_tier(self, account_id: str) -> dict:
         """Return tier info dict for an account based on cached karma.
 
         Returns dict with keys: tier (int 0-3), name, daily_cap, can_post, karma.
@@ -396,59 +398,59 @@ class AccountManager:
         # Fallback (shouldn't happen)
         return {"tier": 0, "name": "new", "daily_cap": 3, "can_post": False, "karma": karma}
 
-    def get_daily_cap(self, username: str) -> int:
+    def get_daily_cap(self, account_id: str) -> int:
         """Return the write-action daily cap for this account based on karma tier."""
         return self.get_account_tier(username)["daily_cap"]
 
-    def can_post(self, username: str) -> bool:
+    def can_post(self, account_id: str) -> bool:
         """Return True if account karma tier allows posting (not just commenting)."""
         return self.get_account_tier(username)["can_post"]
 
     def mark_cooldown(
         self,
         platform: str,
-        account: str,
+        account_id: str,
         minutes: int = 30,
     ):
         """Put an account on cooldown."""
-        key = f"{platform}:{account}"
+        key = account_id
         with self._lock:
             self._cooldowns[key] = datetime.utcnow() + timedelta(minutes=minutes)
             self._statuses[key] = self.COOLDOWN
         self.db.update_account_health(
-            platform, account, self.COOLDOWN,
+            platform, account_id, self.COOLDOWN,
             notes=f"Cooldown for {minutes}min",
         )
-        logger.info(f"Account {account} on {platform}: cooldown {minutes}min")
+        logger.info(f"Account {account_id} on {platform}: cooldown {minutes}min")
 
-    def mark_warned(self, platform: str, account: str, reason: str):
+    def mark_warned(self, platform: str, account_id: str, reason: str):
         """Mark account as warned (suspicious activity detected)."""
-        key = f"{platform}:{account}"
+        key = account_id
         with self._lock:
             self._statuses[key] = self.WARNED
         self.db.update_account_health(
-            platform, account, self.WARNED, notes=reason,
+            platform, account_id, self.WARNED, notes=reason,
         )
-        logger.warning(f"Account {account} on {platform}: warned — {reason}")
+        logger.warning(f"Account {account_id} on {platform}: warned — {reason}")
 
-    def mark_banned(self, platform: str, account: str, reason: str):
+    def mark_banned(self, platform: str, account_id: str, reason: str):
         """Mark account as banned."""
-        key = f"{platform}:{account}"
+        key = account_id
         with self._lock:
             self._statuses[key] = self.BANNED
         self.db.update_account_health(
-            platform, account, self.BANNED, notes=reason,
+            platform, account_id, self.BANNED, notes=reason,
         )
-        logger.error(f"Account {account} on {platform}: BANNED — {reason}")
+        logger.error(f"Account {account_id} on {platform}: BANNED — {reason}")
 
-    def mark_healthy(self, platform: str, account: str):
+    def mark_healthy(self, platform: str, account_id: str):
         """Mark account as healthy."""
-        key = f"{platform}:{account}"
+        key = account_id
         with self._lock:
             self._statuses[key] = self.HEALTHY
             if key in self._cooldowns:
                 del self._cooldowns[key]
-        self.db.update_account_health(platform, account, self.HEALTHY)
+        self.db.update_account_health(platform, account_id, self.HEALTHY)
 
     def get_assigned_subreddits(self, account: Dict, platform: str) -> List[str]:
         """Get subreddits explicitly assigned to this account in the YAML config.
@@ -490,7 +492,7 @@ class AccountManager:
         except Exception:
             return []
 
-    def get_all_health(self) -> List[Dict]:
+    def get_all_health(self, business_id: Optional[str] = None) -> List[Dict]:
         """Get health status for all configured accounts."""
         results = []
         for platform in ("reddit", "twitter", "telegram"):

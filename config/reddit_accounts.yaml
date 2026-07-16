@@ -15,9 +15,11 @@ accounts:
     client_secret: ""
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     cookies_file: "data/cookies/reddit_account1.json"
+    account_id: "primary_acct_1"
+    business_id: "unconfigured_business"
     enabled: true
     persona: "content_creator"
-    assigned_projects: ["my_project"]
+    assigned_products: ["my_project"]
     cooldown_minutes: 10
     max_actions_per_hour: 5
 
@@ -27,9 +29,11 @@ accounts:
   #   client_secret: ""
   #   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
   #   cookies_file: "data/cookies/reddit_account2.json"
-  #   enabled: true
+  #   account_id: "primary_acct_1"
+    business_id: "unconfigured_business"
+    enabled: true
   #   persona: "helpful_casual"
-  #   assigned_projects: ["my_project"]
+  #   assigned_products: ["my_project"]
   #   cooldown_minutes: 10
   #   max_actions_per_hour: 5
 
