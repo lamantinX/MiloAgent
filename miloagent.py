@@ -47,11 +47,18 @@ def load_projects(projects_dir: str = "projects/") -> list:
 
 
 def find_project(projects: list, name: str) -> dict:
-    """Find a project by name (case-insensitive)."""
+    """Find a project by name or id (case-insensitive)."""
+    matches = []
     for p in projects:
-        if p.get("project", {}).get("name", "").lower() == name.lower():
-            return p
-    return {}
+        if p.get("id", "").lower() == name.lower() or p.get("project", {}).get("name", "").lower() == name.lower():
+            matches.append(p)
+    if len(matches) > 1:
+        import click
+        click.echo(click.style(f"Ambiguous project '{name}'. Found in multiple businesses:", fg="yellow"))
+        for m in matches:
+            click.echo(f"  --project {m.get('id')}  (Business: {m.get('business_id', 'unknown')})")
+        raise SystemExit(1)
+    return matches[0] if matches else {}
 
 
 def setup_logging(level: str = "INFO"):
@@ -361,6 +368,8 @@ def scan(ctx, platform, project):
     db = Database(settings["database"]["path"])
     llm = LLMProvider("config/llm.yaml")
     content_gen = ContentGenerator(llm)
+    from safety.account_manager import AccountManager
+    account_mgr = AccountManager(db, "config")
 
     # Filter projects
     if project and project.lower() != "all":
@@ -373,32 +382,24 @@ def scan(ctx, platform, project):
         projects = [matched]
 
     if platform in ("reddit", "all"):
-        _scan_reddit(db, content_gen, projects)
+        _scan_reddit(db, content_gen, projects, account_mgr)
 
     if platform in ("twitter", "all"):
-        _scan_twitter(db, content_gen, projects)
+        _scan_twitter(db, content_gen, projects, account_mgr)
 
     if platform in ("telegram", "all"):
-        _scan_telegram(db, content_gen, projects)
+        _scan_telegram(db, content_gen, projects, account_mgr)
 
     db.close()
 
 
-def _get_reddit_bot(db, content_gen):
+def _get_reddit_bot(db, content_gen, account):
     """Create the right Reddit bot based on auth_mode config."""
     reddit_cfg = load_yaml("config/reddit_accounts.yaml")
     auth_mode = reddit_cfg.get("auth_mode", "web")
-    accounts = reddit_cfg.get("accounts", [])
-
-    if not accounts:
-        click.echo(click.style("No Reddit accounts configured.", fg="red"))
-        return None
-
-    account = next((a for a in accounts if a.get("enabled", True)), None)
     if not account:
-        click.echo(click.style("No enabled Reddit accounts.", fg="red"))
+        click.echo(click.style("No assigned Reddit account.", fg="red"))
         return None
-
     if auth_mode == "api" and account.get("client_id"):
         from platforms.reddit_bot import RedditBot
         click.echo("  (using PRAW/API mode)")
@@ -409,9 +410,10 @@ def _get_reddit_bot(db, content_gen):
         return RedditWebBot(db, content_gen, account)
 
 
-def _scan_reddit(db, content_gen, projects):
+def _scan_reddit(db, content_gen, projects, account_mgr):
     """Run Reddit scan for given projects."""
-    bot = _get_reddit_bot(db, content_gen)
+    account = account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+    bot = _get_reddit_bot(db, content_gen, account)
     if not bot:
         return
 
@@ -431,23 +433,18 @@ def _scan_reddit(db, content_gen, projects):
             )
 
 
-def _scan_twitter(db, content_gen, projects):
+def _scan_twitter(db, content_gen, projects, account_mgr):
     """Run Twitter scan for given projects."""
     from platforms.twitter_bot import TwitterBot
-
-    accounts = load_yaml("config/twitter_accounts.yaml").get("accounts", [])
-    if not accounts:
-        click.echo(click.style("No Twitter accounts configured.", fg="red"))
-        return
-
-    account = next((a for a in accounts if a.get("enabled", True)), None)
-    if not account:
-        click.echo(click.style("No enabled Twitter accounts.", fg="red"))
-        return
-
-    bot = TwitterBot(db, content_gen, account)
-
     for proj in projects:
+        account = account_mgr.get_next_account("twitter", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        bot = _get_twitter_bot(db, content_gen, account) if '_get_twitter_bot' in globals() else None
+        if not bot:
+            if account:
+                bot = TwitterBot(db, content_gen, account)
+            else:
+                continue
+
         proj_name = proj.get("project", {}).get("name", "unknown")
         click.echo(f"\nScanning Twitter for {proj_name}...")
         opportunities = bot.scan(proj)
@@ -458,29 +455,15 @@ def _scan_twitter(db, content_gen, projects):
             )
 
 
-def _scan_telegram(db, content_gen, projects):
+def _scan_telegram(db, content_gen, projects, account_mgr):
     """Run Telegram group scan for given projects."""
     from platforms.telegram_group_bot import TelegramGroupBot
 
-    accounts = load_yaml("config/telegram_user_accounts.yaml").get("accounts", [])
-    if not accounts:
-        click.echo(click.style("No Telegram user accounts configured.", fg="red"))
-        return
-
-    account = next(
-        (a for a in accounts
-         if a.get("enabled", True)
-         and a.get("api_id")
-         and not a.get("phone", "").startswith("+00XXX")),
-        None,
-    )
-    if not account:
-        click.echo(click.style("No enabled Telegram accounts with credentials.", fg="red"))
-        return
-
-    bot = TelegramGroupBot(db, content_gen, account)
-
     for proj in projects:
+        account = account_mgr.get_next_account("telegram", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        if not account:
+            continue
+        bot = TelegramGroupBot(db, content_gen, account)
         tg_cfg = proj.get("telegram", {})
         if not tg_cfg.get("enabled", False):
             continue
@@ -516,6 +499,8 @@ def post(ctx, platform, project, dry_run, target):
     db = Database(settings["database"]["path"])
     llm = LLMProvider("config/llm.yaml")
     content_gen = ContentGenerator(llm)
+    from safety.account_manager import AccountManager
+    account_mgr = AccountManager(db, "config")
 
     proj = find_project(projects, project)
     if not proj:
@@ -531,9 +516,10 @@ def post(ctx, platform, project, dry_run, target):
     db.close()
 
 
-def _post_reddit(db, content_gen, project, dry_run, target_id):
+def _post_reddit(db, content_gen, project, dry_run, target_id, account_mgr):
     """Post a Reddit comment."""
-    bot = _get_reddit_bot(db, content_gen)
+    account = account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+    bot = _get_reddit_bot(db, content_gen, account)
     if not bot:
         return
     proj_name = project.get("project", {}).get("name", "unknown")
@@ -571,16 +557,14 @@ def _post_reddit(db, content_gen, project, dry_run, target_id):
             click.echo(click.style("Failed to post comment.", fg="red"))
 
 
-def _post_twitter(db, content_gen, project, dry_run, target_id):
+def _post_twitter(db, content_gen, project, dry_run, target_id, account_mgr):
     """Post a tweet or reply."""
     from platforms.twitter_bot import TwitterBot
 
-    accounts = load_yaml("config/twitter_accounts.yaml").get("accounts", [])
-    account = next((a for a in accounts if a.get("enabled", True)), None)
+    account = account_mgr.get_next_account("twitter", business_id=project.get("business_id", ""), product_id=project.get("id"))
     if not account:
-        click.echo(click.style("No enabled Twitter accounts.", fg="red"))
+        click.echo(click.style("No assigned Twitter account.", fg="red"))
         return
-
     bot = TwitterBot(db, content_gen, account)
     proj_name = project.get("project", {}).get("name", "unknown")
 
@@ -638,6 +622,8 @@ def engage(ctx, platform, project):
     db = Database(settings["database"]["path"])
     llm = LLMProvider("config/llm.yaml")
     content_gen = ContentGenerator(llm)
+    from safety.account_manager import AccountManager
+    account_mgr = AccountManager(db, "config")
 
     # Filter projects
     if project and project.lower() != "all":
@@ -649,17 +635,18 @@ def engage(ctx, platform, project):
         projects = [matched]
 
     if platform in ("reddit", "all"):
-        _engage_reddit(db, content_gen, projects)
+        _engage_reddit(db, content_gen, projects, account_mgr)
 
     if platform in ("twitter", "all"):
-        _engage_twitter(db, content_gen, projects)
+        _engage_twitter(db, content_gen, projects, account_mgr)
 
     db.close()
 
 
-def _engage_reddit(db, content_gen, projects):
+def _engage_reddit(db, content_gen, projects, account_mgr):
     """Run Reddit engagement (subscribe, upvote, save)."""
-    bot = _get_reddit_bot(db, content_gen)
+    account = account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+    bot = _get_reddit_bot(db, content_gen, account)
     if not bot:
         return
 
@@ -690,16 +677,14 @@ def _engage_reddit(db, content_gen, projects):
         ))
 
 
-def _engage_twitter(db, content_gen, projects):
+def _engage_twitter(db, content_gen, projects, account_mgr):
     """Run Twitter engagement (like, follow, retweet)."""
     from platforms.twitter_bot import TwitterBot
 
-    accounts = load_yaml("config/twitter_accounts.yaml").get("accounts", [])
-    account = next((a for a in accounts if a.get("enabled", True)), None)
+    account = account_mgr.get_next_account("twitter", business_id=project.get("business_id", ""), product_id=project.get("id"))
     if not account:
-        click.echo(click.style("No enabled Twitter accounts.", fg="red"))
+        click.echo(click.style("No assigned Twitter account.", fg="red"))
         return
-
     bot = TwitterBot(db, content_gen, account)
 
     for proj in projects:
@@ -718,7 +703,9 @@ def _engage_twitter(db, content_gen, projects):
 
 @cli.command(name="account-info")
 @click.argument("platform", type=click.Choice(["reddit", "twitter"]))
-def account_info(platform):
+@click.option("--project", "-p", required=True, help="Project name")
+@click.pass_context
+def account_info(ctx, platform, project):
     """Show detailed info for an account (karma, followers, etc.)."""
     from core.database import Database
     from core.llm_provider import LLMProvider
@@ -727,9 +714,16 @@ def account_info(platform):
     db = Database("data/miloagent.db")
     llm = LLMProvider("config/llm.yaml")
     content_gen = ContentGenerator(llm)
+    from safety.account_manager import AccountManager
+    account_mgr = AccountManager(db, "config")
 
+    projects = ctx.obj["projects"]
+    proj = find_project(projects, project)
+    if not proj: click.echo("Project not found"); db.close(); return
+    
     if platform == "reddit":
-        bot = _get_reddit_bot(db, content_gen)
+        account = account_mgr.get_next_account("reddit", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        bot = _get_reddit_bot(db, content_gen, account)
         if not bot:
             db.close()
             return

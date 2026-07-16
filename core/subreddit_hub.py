@@ -531,6 +531,7 @@ Rules:
             # Log as a specific action type
             self.db.log_action(
                 platform="reddit",
+                business_id=project.get("business_id", ""),
                 action_type="hub_post",
                 account=reddit_bot._username,
                 project=project.get("project", {}).get("name", ""),

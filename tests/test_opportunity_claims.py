@@ -9,14 +9,14 @@ def test_concurrent_opportunity_claims(tmp_path):
     db = Database(db_path)
     
     # Insert an opportunity
-    cursor = db.get_cursor()
+    cursor = db.conn.cursor()
     cursor.execute("""
         INSERT INTO opportunities 
-        (target_id, platform, project, title, url, status) 
-        VALUES ('123', 'reddit', 'proj1', 'Test', 'url', 'pending')
+        (target_id, platform, business_id, project, title, subreddit_or_query, status) 
+        VALUES ('123', 'reddit', 'biz_test', 'proj1', 'Test', 'url', 'pending')
     """)
     opp_id = cursor.lastrowid
-    db._conn.commit()
+    db.conn.commit()
 
     # The goal: Multiple threads try to claim the exact same ID.
     # Only one should get True, the rest False.
@@ -38,8 +38,8 @@ def test_concurrent_opportunity_claims(tmp_path):
     assert results.count(False) == 9
     
     # Check status
-    opp = db.get_opportunity('123')
-    assert opp['status'] == 'claimed'
+    opp = db.conn.execute("SELECT * FROM opportunities WHERE target_id = '123'").fetchone()
+    assert opp["status"] == 'claimed'
     
     db.close()
 

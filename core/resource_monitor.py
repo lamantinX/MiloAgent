@@ -1,3 +1,4 @@
+if __import__("sys").platform == "win32": __import__("sys").modules["resource"] = type("MockResource", (), {"getrusage": lambda *a: type("Mock", (), {"ru_maxrss": 0, "ru_ixrss": 0})(), "RUSAGE_SELF": 0})()
 """System resource monitor — adapts bot behavior to hardware limits.
 
 Checks CPU, RAM, and disk usage. Automatically throttles the bot

@@ -106,7 +106,7 @@ def test_rotation_and_state(test_db, mock_biz_mgr, tmp_path):
     assert a1["account_id"] != a2["account_id"], "Should rotate within same business"
     
     # Test state isolation
-    mgr.mark_cooldown("reddit", a1["account_id"], 10)
+    mgr.mark_cooldown("reddit", a1["business_id"], a1["account_id"], 10)
     a1_again = mgr.get_next_account("reddit", business_id="biz_1")
     assert a1_again["account_id"] == a2["account_id"], "Should not return cooled down account"
     

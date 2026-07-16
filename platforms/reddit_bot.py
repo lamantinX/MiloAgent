@@ -120,7 +120,7 @@ class RedditBot(BasePlatform):
 
                         # Log to database
                         self.db.log_opportunity(
-                            platform="reddit",
+                            platform="reddit", business_id=self.account.get("business_id", ""),
                             target_id=submission.id,
                             title=submission.title,
                             subreddit_or_query=sub_name,
@@ -186,7 +186,7 @@ class RedditBot(BasePlatform):
 
                 # Validate against bot patterns + organic leakage
                 is_valid, score, issues = _validator.validate(
-                    candidate, project, platform="reddit",
+                    candidate, project, platform="reddit", business_id=self.account.get("business_id", ""),
                     is_promotional=is_promo,
                 )
 
@@ -213,7 +213,7 @@ class RedditBot(BasePlatform):
                     f"r/{opportunity['subreddit']}: {opportunity['title'][:50]}"
                 )
                 self.db.log_action(
-                    platform="reddit",
+                    platform="reddit", business_id=self.account.get("business_id", ""),
                     action_type="comment",
                     account=self._username,
                     project=project_name,
@@ -245,7 +245,7 @@ class RedditBot(BasePlatform):
 
             # Log success
             self.db.log_action(
-                platform="reddit",
+                platform="reddit", business_id=self.account.get("business_id", ""),
                 action_type="comment",
                 account=self._username,
                 project=project_name,
@@ -271,7 +271,7 @@ class RedditBot(BasePlatform):
         except Exception as e:
             logger.error(f"Failed to comment: {e}")
             self.db.log_action(
-                platform="reddit",
+                platform="reddit", business_id=self.account.get("business_id", ""),
                 action_type="comment",
                 account=self._username,
                 project=project_name,

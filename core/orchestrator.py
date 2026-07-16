@@ -165,10 +165,8 @@ class Orchestrator:
         self._scan_running = False  # Guard against concurrent scans
 
         # Platform bots (initialized per-account on demand)
-        self._reddit_bots: Dict[str, RedditBot] = {}
-        self._twitter_bots: Dict[str, TwitterBot] = {}
-        self._telegram_group_bots: Dict[str, TelegramGroupBot] = {}
-
+        self._clients: Dict[tuple, object] = {}  # (business_id, platform, account_id)
+                
         # Alert log for TUI conversations view
         self._alert_log: deque = deque(maxlen=100)
 
@@ -288,45 +286,44 @@ class Orchestrator:
 
     def _get_reddit_bot(self, account: Dict):
         """Get or create a Reddit bot for an account."""
-        username = account["username"]
-        if username not in self._reddit_bots:
+        key = (account.get("business_id"), "reddit", account.get("account_id"))
+        if key not in self._clients:
             reddit_cfg = load_yaml(f"{self.config_dir}/reddit_accounts.yaml")
             auth_mode = reddit_cfg.get("auth_mode", "web")
             if auth_mode == "api" and account.get("client_id"):
-                self._reddit_bots[username] = RedditBot(
+                self._clients[key] = RedditBot(
                     self.db, self.content_gen, account
                 )
             else:
                 from platforms.reddit_web import RedditWebBot
-                self._reddit_bots[username] = RedditWebBot(
+                self._clients[key] = RedditWebBot(
                     self.db, self.content_gen, account
                 )
-        return self._reddit_bots[username]
+        return self._clients[key]
 
     def _get_twitter_bot(self, account: Dict) -> TwitterBot:
         """Get or create a Twitter bot for an account."""
-        username = account["username"]
-        if username not in self._twitter_bots:
-            # Resolve proxy: per-account > twitter-specific > global
+        key = (account.get("business_id"), "twitter", account.get("account_id"))
+        if key not in self._clients:
             http_cfg = self.settings.get("http", {})
             proxy = (
                 account.get("proxy")
                 or http_cfg.get("twitter_proxy")
                 or http_cfg.get("proxy")
             )
-            self._twitter_bots[username] = TwitterBot(
+            self._clients[key] = TwitterBot(
                 self.db, self.content_gen, account, proxy=proxy
             )
-        return self._twitter_bots[username]
+        return self._clients[key]
 
     def _get_telegram_group_bot(self, account: Dict) -> TelegramGroupBot:
         """Get or create a Telegram group bot for an account."""
-        username = account.get("username") or account.get("phone", "unknown")
-        if username not in self._telegram_group_bots:
-            self._telegram_group_bots[username] = TelegramGroupBot(
+        key = (account.get("business_id"), "telegram", account.get("account_id"))
+        if key not in self._clients:
+            self._clients[key] = TelegramGroupBot(
                 self.db, self.content_gen, account
             )
-        return self._telegram_group_bots[username]
+        return self._clients[key]
 
     def _init_telegram(self):
         """Initialize Telegram dashboard if configured."""
@@ -619,7 +616,7 @@ class Orchestrator:
                 pass
 
         # Close all Reddit bot sessions
-        for bot in self._reddit_bots.values():
+        for bot in [c for k, c in self._clients.items() if k[1] == 'reddit']:
             if hasattr(bot, "close"):
                 try:
                     bot.close()
@@ -627,7 +624,7 @@ class Orchestrator:
                     pass
 
         # Disconnect Telegram group bots (2s timeout -- don't let this block shutdown)
-        for bot in self._telegram_group_bots.values():
+        for bot in [c for k, c in self._clients.items() if k[1] == 'telegram']:
             try:
                 from platforms.telegram_group_bot import _run_tg_async
                 _run_tg_async(bot.disconnect(), timeout=2)
@@ -635,21 +632,21 @@ class Orchestrator:
                 pass
 
         # Close all bot sessions before clearing (prevents connection leaks)
-        for bot in self._reddit_bots.values():
+        for bot in [c for k, c in self._clients.items() if k[1] == 'reddit']:
             try:
                 if hasattr(bot, "close"):
                     bot.close()
             except Exception:
                 pass
-        self._reddit_bots.clear()
-        for bot in self._twitter_bots.values():
+        self._clients = {}
+        for bot in [c for k, c in self._clients.items() if k[1] == 'twitter']:
             try:
                 if hasattr(bot, "close"):
                     bot.close()
             except Exception:
                 pass
-        self._twitter_bots.clear()
-        self._telegram_group_bots.clear()
+        
+        
 
         # Shutdown LLM thread pool
         if hasattr(self.llm, "shutdown"):
@@ -740,8 +737,9 @@ class Orchestrator:
                     return
                 scan_project = self._expand_project_targets(project)
                 scan_project = self._limit_scan_targets(scan_project)
-                account = self.account_mgr.get_next_account("reddit", project=proj_name)
+                account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
                 if not account:
+                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                     logger.debug(f"Scan {proj_name}: no account available")
                     return
                 bot = self._get_reddit_bot(account)
@@ -907,8 +905,9 @@ class Orchestrator:
             if not pending:
                 continue
 
-            account = self.account_mgr.get_next_account(platform, project=proj_name)
+            account = self.account_mgr.get_next_account(platform, business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform=platform, project=project.get("id"), details="No assigned account")
                 continue
 
             # SAFETY: Filter opportunities to only assigned subreddits for this account
@@ -1199,8 +1198,7 @@ class Orchestrator:
                     self.rate_limiter.record_action(
                         account["username"], platform
                     )
-                    self.account_mgr.mark_healthy(
-                        platform, account["username"]
+                    self.account_mgr.mark_healthy(platform, account.get("business_id", ""), account.get("account_id", account["username"])
                     )
 
                     try:
@@ -1267,8 +1265,7 @@ class Orchestrator:
                     cooldown = self._graduated_cooldown(
                         platform, account["username"]
                     )
-                    self.account_mgr.mark_cooldown(
-                        platform, account["username"], minutes=cooldown
+                    self.account_mgr.mark_cooldown(platform, account.get("business_id", ""), account.get("account_id", account["username"]), minutes=cooldown
                     )
 
             except Exception as e:
@@ -1292,8 +1289,7 @@ class Orchestrator:
                         pass
                 # Graduated cooldown from exception context
                 cooldown = self._error_cooldown_from_exception(str(e))
-                self.account_mgr.mark_cooldown(
-                    platform, account["username"], minutes=cooldown
+                self.account_mgr.mark_cooldown(platform, account.get("business_id", ""), account.get("account_id", account["username"]), minutes=cooldown
                 )
         return False
 
@@ -1403,7 +1399,7 @@ class Orchestrator:
 
             # Reddit engagement -- warm_up only for accounts with karma>=5
             # (low-karma accounts get CAPTCHA'd on warm_up actions)
-            account = self.account_mgr.get_next_account("reddit", project=proj_name)
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if account and self._check_resources():
                 try:
                     karma = self.account_mgr.get_cached_karma(account["username"])
@@ -1448,8 +1444,9 @@ class Orchestrator:
                 break
 
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", project=proj_name)
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                 continue
 
             # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
@@ -1697,8 +1694,9 @@ class Orchestrator:
             if not comment_id or comment_id == "unknown":
                 continue
 
-            account = self.account_mgr.get_next_account("reddit")
+            account = self.account_mgr.get_next_account("reddit", business_id=action.get("business_id", ""), product_id=action.get("project"))
             if not account:
+                self.db.log_decision("skip", platform="reddit", project=action.get("project"), details="No assigned account")
                 break
 
             try:
@@ -1872,8 +1870,7 @@ class Orchestrator:
                 if removal_rate > 0.50 and removed_count >= 3:
                     # CRITICAL: >50% removed, likely shadowbanned or flagged
                     cooldown_hours = 24
-                    self.account_mgr.mark_cooldown(
-                        "reddit", username, minutes=cooldown_hours * 60
+                    self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
                     )
                     msg = (
                         f"CIRCUIT BREAKER: {username} paused {cooldown_hours}h — "
@@ -1891,8 +1888,7 @@ class Orchestrator:
                 elif removal_rate > 0.30 and removed_count >= 2:
                     # WARNING: >30% removed, back off significantly
                     cooldown_hours = 6
-                    self.account_mgr.mark_cooldown(
-                        "reddit", username, minutes=cooldown_hours * 60
+                    self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
                     )
                     msg = (
                         f"Circuit breaker: {username} paused {cooldown_hours}h — "
@@ -1911,8 +1907,7 @@ class Orchestrator:
                     # CAUTION: elevated removal rate, short cooldown
                     if current_status != "cooldown":
                         cooldown_hours = 2
-                        self.account_mgr.mark_cooldown(
-                            "reddit", username, minutes=cooldown_hours * 60
+                        self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
                         )
                         msg = (
                             f"Circuit breaker (soft): {username} paused {cooldown_hours}h — "
@@ -1944,8 +1939,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", project=proj_name)
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                 continue
 
             # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
@@ -2077,6 +2073,7 @@ class Orchestrator:
                     # Log with post_type metadata for learning
                     action_id = self.db.log_action(
                         platform="reddit",
+                        business_id=account.get("business_id", ""),
                         action_type="user_post",
                         account=account["username"],
                         project=proj_name,
@@ -2161,8 +2158,9 @@ class Orchestrator:
                 break
 
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("twitter")
+            account = self.account_mgr.get_next_account("twitter", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform="twitter", project=project.get("id"), details="No assigned account")
                 continue
 
             allowed, reason = self.rate_limiter.can_act(
@@ -2264,8 +2262,9 @@ class Orchestrator:
                 continue
 
             # Find a Twitter account
-            account = self.account_mgr.get_next_account("twitter")
+            account = self.account_mgr.get_next_account("twitter", business_id=action.get("business_id", ""), product_id=action.get("project"))
             if not account:
+                self.db.log_decision("skip", platform="twitter", project=action.get("project"), details="No assigned account")
                 break
 
             allowed, reason = self.rate_limiter.can_act(
@@ -2409,8 +2408,7 @@ class Orchestrator:
                     bot, username
                 )
                 if result["is_shadowbanned"]:
-                    self.account_mgr.mark_warned(
-                        "reddit", username,
+                    self.account_mgr.mark_warned("reddit", account.get("business_id", ""), account.get("account_id", username),
                         f"Possible shadowban: {result['indicators']}"
                     )
                     from dashboard.telegram_bot import _SHADOWBAN_MSGS, _pick
@@ -2537,8 +2535,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit")
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                 continue
 
             # Find subreddits needing activity
@@ -2842,7 +2841,7 @@ class Orchestrator:
             reddit_bot = None
             twitter_bot = None
 
-            account = self.account_mgr.get_next_account("reddit")
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if account:
                 reddit_bot = self._get_reddit_bot(account)
 
@@ -2940,10 +2939,11 @@ class Orchestrator:
                             f"Hub r/{hub['subreddit']}: assigned account @{assigned_username} "
                             f"unavailable — using round-robin"
                         )
-                        account = self.account_mgr.get_next_account("reddit")
+                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
                 else:
-                    account = self.account_mgr.get_next_account("reddit")
+                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
                 if not account:
+                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                     continue
 
                 try:
@@ -3005,10 +3005,11 @@ class Orchestrator:
                             f"Assigned account {assigned_username} unavailable for r/{hub['subreddit']} "
                             f"— falling back to round-robin"
                         )
-                        account = self.account_mgr.get_next_account("reddit")
+                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
                 else:
-                    account = self.account_mgr.get_next_account("reddit")
+                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
                 if not account:
+                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                     continue
                 bot = self._get_reddit_bot(account)
 
@@ -3114,8 +3115,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit")
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
             if not account:
+                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
                 continue
 
             try:
@@ -3436,12 +3438,12 @@ class Orchestrator:
 
     def _on_accounts_reloaded(self):
         """Clear cached bot instances so they rebuild with new accounts."""
-        old_reddit = len(self._reddit_bots)
-        old_twitter = len(self._twitter_bots)
+        old_reddit = len([c for k, c in self._clients.items() if k[1] == 'reddit'])
+        old_twitter = len([c for k, c in self._clients.items() if k[1] == 'twitter'])
         old_telegram = len(self._telegram_group_bots)
-        self._reddit_bots.clear()
-        self._twitter_bots.clear()
-        self._telegram_group_bots.clear()
+        self._clients = {}
+        
+        
         logger.info(
             f"Account caches invalidated: {old_reddit} reddit, "
             f"{old_twitter} twitter, {old_telegram} telegram bots cleared"

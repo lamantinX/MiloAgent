@@ -228,7 +228,7 @@ class TelegramGroupBot(BasePlatform):
             logger.info(f"Joined Telegram group: @{group_username} ({entity.title})")
             try:
                 self.db.log_action(
-                    platform="telegram",
+                    platform="telegram", business_id=self.account.get("business_id", ""),
                     action_type="join_group",
                     account=self._username,
                     project="discovery",
@@ -482,7 +482,7 @@ class TelegramGroupBot(BasePlatform):
         for opp in opportunities:
             try:
                 self.db.log_opportunity(
-                    platform="telegram",
+                    platform="telegram", business_id=self.account.get("business_id", ""),
                     target_id=opp["target_id"],
                     title=opp.get("title", "")[:100],
                     subreddit_or_query=opp.get("group_name", ""),
@@ -649,7 +649,7 @@ class TelegramGroupBot(BasePlatform):
 
             # Log success
             self.db.log_action(
-                platform="telegram",
+                platform="telegram", business_id=self.account.get("business_id", ""),
                 action_type="reply",
                 account=self._username,
                 project=project_name,
@@ -673,7 +673,7 @@ class TelegramGroupBot(BasePlatform):
         except Exception as e:
             logger.error(f"Telegram action failed: {e}")
             self.db.log_action(
-                platform="telegram",
+                platform="telegram", business_id=self.account.get("business_id", ""),
                 action_type="reply",
                 account=self._username,
                 project=project_name,

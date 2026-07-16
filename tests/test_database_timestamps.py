@@ -21,7 +21,7 @@ def test_windowed_read_returns_just_written_row(tmp_sqlite_path):
     db = Database(str(tmp_sqlite_path))
     try:
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -29,7 +29,7 @@ def test_windowed_read_returns_just_written_row(tmp_sqlite_path):
             content="timestamp regression",
             success=True,
         )
-        actions = db.get_recent_actions(hours=1, platform="reddit", limit=10)
+        actions = db.get_recent_actions(hours=1, platform="reddit", business_id="biz_test", limit=10)
         assert len(actions) == 1
         assert actions[0]["target_id"] == "t3_ts1"
     finally:
@@ -41,7 +41,7 @@ def test_action_count_returns_one_not_zero(tmp_sqlite_path):
     db = Database(str(tmp_sqlite_path))
     try:
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -59,7 +59,7 @@ def test_action_count_grows_with_second_row(tmp_sqlite_path):
     db = Database(str(tmp_sqlite_path))
     try:
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -68,7 +68,7 @@ def test_action_count_grows_with_second_row(tmp_sqlite_path):
             success=True,
         )
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -86,7 +86,7 @@ def test_recent_actions_by_type_returns_both(tmp_sqlite_path):
     db = Database(str(tmp_sqlite_path))
     try:
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -95,7 +95,7 @@ def test_recent_actions_by_type_returns_both(tmp_sqlite_path):
             success=True,
         )
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="ts-account",
             project="ts-project",
@@ -130,7 +130,7 @@ def test_genuinely_old_row_is_excluded(tmp_sqlite_path):
         )
         # A fresh row that SHOULD appear.
         db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="new-account",
             project="ts-project",
@@ -138,7 +138,7 @@ def test_genuinely_old_row_is_excluded(tmp_sqlite_path):
             content="fresh",
             success=True,
         )
-        actions = db.get_recent_actions(hours=1, platform="reddit", limit=10)
+        actions = db.get_recent_actions(hours=1, platform="reddit", business_id="biz_test", limit=10)
         targets = {a["target_id"] for a in actions}
         assert "t3_new" in targets
         assert "t3_old" not in targets

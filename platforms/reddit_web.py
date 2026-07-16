@@ -416,7 +416,7 @@ class RedditWebBot(BasePlatform):
         opp["relevance_score"] = self._score_opportunity(opp, project)
 
         self.db.log_opportunity(
-            platform="reddit",
+            platform="reddit", business_id=self.account.get("business_id", ""),
             target_id=post_id,
             title=post.get("title", ""),
             subreddit_or_query=sub_name,
@@ -685,7 +685,7 @@ class RedditWebBot(BasePlatform):
                 logger.warning("Content validation failed after retry, skipping")
                 # Mark as failed so orchestrator doesn't retry this opportunity
                 self.db.log_action(
-                    platform="reddit", action_type="comment",
+                    platform="reddit", business_id=self.account.get("business_id", ""), action_type="comment",
                     account=self._username,
                     project=project.get("project", {}).get("name", "unknown"),
                     target_id=opportunity.get("id", ""),
@@ -773,7 +773,7 @@ class RedditWebBot(BasePlatform):
                     f"likely auto-removed by spam filter"
                 )
                 self.db.log_action(
-                    platform="reddit",
+                    platform="reddit", business_id=self.account.get("business_id", ""),
                     action_type="comment",
                     account=self._username,
                     project=project_name,
@@ -803,7 +803,7 @@ class RedditWebBot(BasePlatform):
                     if sub:
                         self.db.log_captcha_hit(sub, self._username)  # reuse captcha_hot mechanism
                     self.db.log_action(
-                        platform="reddit",
+                        platform="reddit", business_id=self.account.get("business_id", ""),
                         action_type="comment",
                         account=self._username,
                         project=project_name,
@@ -850,7 +850,7 @@ class RedditWebBot(BasePlatform):
                     return False
                 logger.error(f"Reddit comment error: {error_msg}")
                 self.db.log_action(
-                    platform="reddit",
+                    platform="reddit", business_id=self.account.get("business_id", ""),
                     action_type="comment",
                     account=self._username,
                     project=project_name,
@@ -886,7 +886,7 @@ class RedditWebBot(BasePlatform):
             comment_id = comment_data.get("id", "unknown")
 
             self.db.log_action(
-                platform="reddit",
+                platform="reddit", business_id=self.account.get("business_id", ""),
                 action_type="comment",
                 account=self._username,
                 project=project_name,
@@ -913,7 +913,7 @@ class RedditWebBot(BasePlatform):
             logger.error(f"Failed to comment: {e}")
             self._consecutive_failures += 1
             self.db.log_action(
-                platform="reddit",
+                platform="reddit", business_id=self.account.get("business_id", ""),
                 action_type="comment",
                 account=self._username,
                 project=project_name,
@@ -1292,7 +1292,7 @@ class RedditWebBot(BasePlatform):
             post_url = result.get("json", {}).get("data", {}).get("url", "")
 
             self.db.log_action(
-                platform="reddit",
+                platform="reddit", business_id=self.account.get("business_id", ""),
                 action_type="post",
                 account=self._username,
                 project=project_name,
@@ -1373,7 +1373,7 @@ class RedditWebBot(BasePlatform):
             if resp.status_code == 200:
                 logger.debug(f"Upvoted {thing_id}")
                 self.db.log_action(
-                    platform="reddit",
+                    platform="reddit", business_id=self.account.get("business_id", ""),
                     action_type="upvote",
                     account=self._username,
                     project="engagement",
@@ -1414,7 +1414,7 @@ class RedditWebBot(BasePlatform):
                 logger.info(f"Subscribed to r/{subreddit}")
                 self._subscribed_subs.add(subreddit.lower())
                 self.db.log_action(
-                    platform="reddit",
+                    platform="reddit", business_id=self.account.get("business_id", ""),
                     action_type="subscribe",
                     account=self._username,
                     project="engagement",
@@ -1956,7 +1956,7 @@ class RedditWebBot(BasePlatform):
             if resp.status_code == 200:
                 logger.info(f"Removed {thing_id} (spam={spam})")
                 self.db.log_action(
-                    platform="reddit", action_type="mod_remove",
+                    platform="reddit", business_id=self.account.get("business_id", ""), action_type="mod_remove",
                     account=self._username, project="moderation",
                     target_id=thing_id, content=f"spam={spam}",
                 )
@@ -1992,7 +1992,7 @@ class RedditWebBot(BasePlatform):
             if resp.status_code == 200:
                 logger.info(f"Approved {thing_id}")
                 self.db.log_action(
-                    platform="reddit", action_type="mod_approve",
+                    platform="reddit", business_id=self.account.get("business_id", ""), action_type="mod_approve",
                     account=self._username, project="moderation",
                     target_id=thing_id, content="",
                 )
@@ -2071,7 +2071,7 @@ class RedditWebBot(BasePlatform):
                 action = "Pinned" if state else "Unpinned"
                 logger.info(f"{action} {thing_id} in slot {num}")
                 self.db.log_action(
-                    platform="reddit", action_type="mod_sticky",
+                    platform="reddit", business_id=self.account.get("business_id", ""), action_type="mod_sticky",
                     account=self._username, project="moderation",
                     target_id=thing_id, content=f"state={state},num={num}",
                 )
@@ -2127,7 +2127,7 @@ class RedditWebBot(BasePlatform):
                 if not result.get("json", {}).get("errors"):
                     logger.info(f"Banned u/{username} from r/{subreddit} ({duration}d)")
                     self.db.log_action(
-                        platform="reddit", action_type="mod_ban",
+                        platform="reddit", business_id=self.account.get("business_id", ""), action_type="mod_ban",
                         account=self._username, project="moderation",
                         target_id=f"r/{subreddit}:u/{username}",
                         content=reason[:100],
@@ -2181,7 +2181,7 @@ class RedditWebBot(BasePlatform):
                 if not result.get("json", {}).get("errors"):
                     logger.info(f"Invited u/{username} as mod of r/{subreddit}")
                     self.db.log_action(
-                        platform="reddit", action_type="mod_invite",
+                        platform="reddit", business_id=self.account.get("business_id", ""), action_type="mod_invite",
                         account=self._username, project="moderation",
                         target_id=f"r/{subreddit}:u/{username}",
                         content=permissions,
@@ -2252,7 +2252,7 @@ class RedditWebBot(BasePlatform):
                 if not errors:
                     logger.info(f"Updated settings for r/{subreddit}")
                     self.db.log_action(
-                        platform="reddit", action_type="admin_settings",
+                        platform="reddit", business_id=self.account.get("business_id", ""), action_type="admin_settings",
                         account=self._username, project="moderation",
                         target_id=f"r/{subreddit}",
                         content=str(list(settings.keys()))[:200],
@@ -2430,7 +2430,7 @@ class RedditWebBot(BasePlatform):
             if resp.status_code == 200:
                 logger.info(f"Edited wiki page r/{subreddit}/wiki/{page}")
                 self.db.log_action(
-                    platform="reddit", action_type="admin_wiki",
+                    platform="reddit", business_id=self.account.get("business_id", ""), action_type="admin_wiki",
                     account=self._username, project="moderation",
                     target_id=f"r/{subreddit}/wiki/{page}",
                     content=reason[:100] if reason else f"Updated {page}",

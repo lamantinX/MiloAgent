@@ -70,6 +70,7 @@ class Database:
             self.conn.executescript("""
                 CREATE TABLE IF NOT EXISTS actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    business_id TEXT,
                     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
                     platform TEXT NOT NULL,
                     action_type TEXT NOT NULL,
@@ -84,6 +85,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS opportunities (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    business_id TEXT,
                     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
                     platform TEXT NOT NULL,
                     target_id TEXT NOT NULL UNIQUE,
@@ -97,6 +99,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS account_health (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    business_id TEXT,
                     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
                     platform TEXT NOT NULL,
                     account TEXT NOT NULL,
@@ -533,6 +536,7 @@ class Database:
     def log_action(
         self,
         platform: str,
+        business_id: str,
         action_type: str,
         account: str,
         project: str,
@@ -545,16 +549,10 @@ class Database:
         """Log a bot action."""
         cursor = self._execute_write(
             """INSERT INTO actions
-               (platform, action_type, account, project, target_id,
+               (platform, business_id, action_type, account, project, target_id,
                 content, metadata, success, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                platform, action_type, account, project, target_id,
-                content,
-                json.dumps(metadata) if metadata else None,
-                1 if success else 0,
-                error_message,
-            ),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (platform, business_id, action_type, account, project, target_id, content, json.dumps(metadata) if metadata else None, 1 if success else 0, error_message),
         )
         self._maybe_cleanup()
         return cursor.lastrowid
@@ -571,6 +569,7 @@ class Database:
         action_type: str,
         hours: int = 48,
         platform: Optional[str] = None,
+        business_id: Optional[str] = None,
     ) -> List[Dict]:
         """Get recent actions of a specific type."""
         since = self._cutoff(hours=hours)
@@ -579,6 +578,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         query += " ORDER BY timestamp DESC"
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
@@ -597,7 +599,7 @@ class Database:
                (action_id, project, subreddit, tone_style, post_type,
                 sentiment_score, reply_count_analyzed,
                 positive_signals, negative_signals)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (action_id, project, subreddit, tone_style, post_type,
              sentiment_score, reply_count, positive_signals, negative_signals),
         )
@@ -679,6 +681,7 @@ class Database:
         self,
         hours: int = 24,
         platform: Optional[str] = None,
+        business_id: Optional[str] = None,
         account: Optional[str] = None,
         limit: int = 50,
     ) -> List[Dict]:
@@ -689,6 +692,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if account:
             query += " AND account = ?"
             params.append(account)
@@ -702,6 +708,7 @@ class Database:
         hours: int = 1,
         account: Optional[str] = None,
         platform: Optional[str] = None,
+        business_id: Optional[str] = None,
         write_only: bool = False,
     ) -> int:
         """Count actions in the last N hours.
@@ -711,12 +718,18 @@ class Database:
         since = self._cutoff(hours=hours)
         query = "SELECT COUNT(*) FROM actions WHERE timestamp > ? AND success = 1"
         params: list = [since]
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if account:
             query += " AND account = ?"
             params.append(account)
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if write_only:
             query += " AND action_type IN ('comment', 'post', 'hub_post')"
         return self.conn.execute(query, params).fetchone()[0]
@@ -771,12 +784,18 @@ class Database:
             "AND action_type IN ('post', 'comment', 'reply', 'hub_post', 'user_post')"
         )
         params = [since]
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if account:
             query += " AND account = ?"
             params.append(account)
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         return self.conn.execute(query, params).fetchone()[0]
 
 
@@ -818,6 +837,7 @@ class Database:
     def log_opportunity(
         self,
         platform: str,
+        business_id: str,
         target_id: str,
         title: str,
         subreddit_or_query: str,
@@ -829,11 +849,11 @@ class Database:
         """Log a discovered opportunity."""
         cursor = self._execute_write(
             """INSERT OR REPLACE INTO opportunities
-               (platform, target_id, title, subreddit_or_query,
+               (platform, business_id, target_id, title, subreddit_or_query,
                 score, project, status, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                platform, target_id, title, subreddit_or_query,
+                platform, business_id, target_id, title, subreddit_or_query,
                 score, project, status,
                 json.dumps(metadata) if metadata else None,
             ),
@@ -843,6 +863,7 @@ class Database:
     def get_pending_opportunities(
         self,
         platform: Optional[str] = None,
+        business_id: Optional[str] = None,
         project: Optional[str] = None,
         min_score: float = 0.0,
         limit: int = 20,
@@ -853,6 +874,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if project:
             query += " AND project = ?"
             params.append(project)
@@ -999,7 +1023,10 @@ class Database:
     # ── Account Health ───────────────────────────────────────────────
 
     def update_account_health(
-        self, platform: str, account: str,
+        self,
+        platform: str,
+        business_id: str,
+        account: str,
         status: str = "healthy", notes: str = "",
     ):
         """Update or insert account health record (one row per account).
@@ -1015,10 +1042,10 @@ class Database:
             )
             self.conn.execute(
                 """INSERT INTO account_health
-                   (platform, account, status, action_count_1h,
+                   (platform, business_id, account, status, action_count_1h,
                     action_count_24h, last_action, notes)
-                   VALUES (?, ?, ?, ?, ?, datetime('now'), ?)""",
-                (platform, account, status, action_1h, action_24h, notes),
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)""",
+                (platform, business_id, account, status, action_1h, action_24h, notes),
             )
             self.conn.commit()
 
@@ -1188,6 +1215,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         query += " GROUP BY subreddit_or_query, keyword ORDER BY avg_engagement DESC"
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
@@ -1262,6 +1292,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if project:
             query += " AND project = ?"
             params.append(project)
@@ -1391,6 +1424,9 @@ class Database:
         if project:
             query += " AND project = ?"
             params.append(project)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         if account:
             query += " AND account = ?"
             params.append(account)
@@ -1438,7 +1474,7 @@ class Database:
             """INSERT INTO knowledge_base
                (project, category, topic, content, source, relevance_score,
                 expires_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (project, category, topic, content, source, relevance_score,
              expires_at, json.dumps(metadata) if metadata else None),
         )
@@ -1623,7 +1659,7 @@ class Database:
             """INSERT INTO failure_patterns
                (project, subreddit, failure_type, pattern, avoidance_rule,
                 last_seen, frequency)
-               VALUES (?, ?, ?, ?, ?, datetime('now'), 1)""",
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)""",
             (project, subreddit, failure_type, pattern, avoidance_rule),
         )
 
@@ -1746,6 +1782,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         query += " ORDER BY trust_score DESC LIMIT 50"
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
@@ -1764,6 +1803,9 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
         query += " ORDER BY trust_score DESC LIMIT 20"
         rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]

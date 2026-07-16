@@ -11,7 +11,7 @@ def test_database_round_trips_action_and_opportunity(tmp_sqlite_path):
     db = Database(str(tmp_sqlite_path))
     try:
         action_id = db.log_action(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             action_type="comment",
             account="smoke-account",
             project="smoke-project",
@@ -23,7 +23,7 @@ def test_database_round_trips_action_and_opportunity(tmp_sqlite_path):
         assert isinstance(action_id, int)
         assert action_id > 0
 
-        actions = db.get_recent_actions(hours=1, platform="reddit", limit=10)
+        actions = db.get_recent_actions(hours=1, platform="reddit", business_id="biz_test", limit=10)
         assert len(actions) == 1
         row = actions[0]
         assert row["platform"] == "reddit"
@@ -35,7 +35,7 @@ def test_database_round_trips_action_and_opportunity(tmp_sqlite_path):
         assert row["success"] == 1
 
         opp_id = db.log_opportunity(
-            platform="reddit",
+            platform="reddit", business_id="biz_test",
             target_id="t3_opp",
             title="an opportunity",
             subreddit_or_query="r/smoke",
@@ -45,7 +45,7 @@ def test_database_round_trips_action_and_opportunity(tmp_sqlite_path):
         assert isinstance(opp_id, int)
         assert opp_id > 0
 
-        opps = db.get_pending_opportunities(platform="reddit", project="smoke-project")
+        opps = db.get_pending_opportunities(platform="reddit", business_id="biz_test", project="smoke-project")
         assert len(opps) == 1
         opp = opps[0]
         assert opp["target_id"] == "t3_opp"

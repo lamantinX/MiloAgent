@@ -310,7 +310,7 @@ class TwitterBot(BasePlatform):
                     opportunities.append(opp)
 
                     self.db.log_opportunity(
-                        platform="twitter",
+                        platform="twitter", business_id=self.account.get("business_id", ""),
                         target_id=tweet_id,
                         title=tweet_text[:100],
                         subreddit_or_query=keyword,
@@ -435,7 +435,7 @@ class TwitterBot(BasePlatform):
             result = await self.client.create_tweet(text=text)
             tweet_id = str(result.id) if hasattr(result, "id") else "unknown"
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="tweet",
                 account=self._username,
                 project=project_name,
@@ -457,7 +457,7 @@ class TwitterBot(BasePlatform):
                 return False
             logger.error(f"Failed to post tweet: {e}")
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="tweet",
                 account=self._username,
                 project=project_name,
@@ -486,7 +486,7 @@ class TwitterBot(BasePlatform):
                 text=text, reply_to=tweet_id
             )
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="reply",
                 account=self._username,
                 project=project_name,
@@ -510,7 +510,7 @@ class TwitterBot(BasePlatform):
                 return False
             logger.error(f"Failed to reply: {e}")
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="reply",
                 account=self._username,
                 project=project_name,
@@ -527,7 +527,7 @@ class TwitterBot(BasePlatform):
         try:
             await self.client.favorite_tweet(tweet_id)
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="like",
                 account=self._username,
                 project="engagement",
@@ -546,7 +546,7 @@ class TwitterBot(BasePlatform):
         try:
             await self.client.retweet(tweet_id)
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="retweet",
                 account=self._username,
                 project="engagement",
@@ -565,7 +565,7 @@ class TwitterBot(BasePlatform):
         try:
             await self.client.follow_user(user_id)
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="follow",
                 account=self._username,
                 project="engagement",
@@ -605,7 +605,7 @@ class TwitterBot(BasePlatform):
                 attachment_url=f"https://x.com/i/status/{tweet_id}",
             )
             self.db.log_action(
-                platform="twitter",
+                platform="twitter", business_id=self.account.get("business_id", ""),
                 action_type="quote_tweet",
                 account=self._username,
                 project=project_name,

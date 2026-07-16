@@ -300,7 +300,7 @@ class AccountManager:
                     if not has_prod and not all_prod:
                         continue
                 
-                key = acc["account_id"]
+                key = f"{business_id}:{acc['account_id']}"
                 status = self._statuses.get(key, self.HEALTHY)
                 if status == self.BANNED:
                     continue
@@ -409,48 +409,48 @@ class AccountManager:
     def mark_cooldown(
         self,
         platform: str,
+        business_id: str,
         account_id: str,
         minutes: int = 30,
     ):
         """Put an account on cooldown."""
-        key = account_id
+        key = f"{business_id}:{account_id}"
         with self._lock:
             self._cooldowns[key] = datetime.utcnow() + timedelta(minutes=minutes)
             self._statuses[key] = self.COOLDOWN
-        self.db.update_account_health(
-            platform, account_id, self.COOLDOWN,
+        self.db.update_account_health(platform, business_id, account_id, self.COOLDOWN,
             notes=f"Cooldown for {minutes}min",
         )
         logger.info(f"Account {account_id} on {platform}: cooldown {minutes}min")
 
-    def mark_warned(self, platform: str, account_id: str, reason: str):
+    def mark_warned(self, platform: str, business_id: str, account_id: str, reason: str):
         """Mark account as warned (suspicious activity detected)."""
-        key = account_id
+        key = f"{business_id}:{account_id}"
         with self._lock:
             self._statuses[key] = self.WARNED
         self.db.update_account_health(
-            platform, account_id, self.WARNED, notes=reason,
+            platform, business_id, account_id, self.WARNED, notes=reason,
         )
         logger.warning(f"Account {account_id} on {platform}: warned — {reason}")
 
-    def mark_banned(self, platform: str, account_id: str, reason: str):
+    def mark_banned(self, platform: str, business_id: str, account_id: str, reason: str):
         """Mark account as banned."""
-        key = account_id
+        key = f"{business_id}:{account_id}"
         with self._lock:
             self._statuses[key] = self.BANNED
         self.db.update_account_health(
-            platform, account_id, self.BANNED, notes=reason,
+            platform, business_id, account_id, self.BANNED, notes=reason,
         )
         logger.error(f"Account {account_id} on {platform}: BANNED — {reason}")
 
-    def mark_healthy(self, platform: str, account_id: str):
+    def mark_healthy(self, platform: str, business_id: str, account_id: str):
         """Mark account as healthy."""
-        key = account_id
+        key = f"{business_id}:{account_id}"
         with self._lock:
             self._statuses[key] = self.HEALTHY
             if key in self._cooldowns:
                 del self._cooldowns[key]
-        self.db.update_account_health(platform, account_id, self.HEALTHY)
+        self.db.update_account_health(platform, business_id, account_id, self.HEALTHY)
 
     def get_assigned_subreddits(self, account: Dict, platform: str) -> List[str]:
         """Get subreddits explicitly assigned to this account in the YAML config.
