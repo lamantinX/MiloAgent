@@ -1,0 +1,71 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-8.3.4, pluggy-1.6.0
+rootdir: C:\dev\MiloAgent\.worktrees\006
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.24.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, default_loop_scope=None
+collected 1 item
+
+tests\test_reddit_oauth.py F                                             [100%]
+
+================================== FAILURES ===================================
+_________________________ test_oauth_callback_success _________________________
+
+mock_post = <MagicMock name='post' id='2738106392192'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000027D8396B100>
+tmp_path = WindowsPath('C:/Users/zelen/AppData/Local/Temp/pytest-of-zelen/pytest-177/test_oauth_callback_success0')
+
+    @patch("requests.post")
+    def test_oauth_callback_success(mock_post, monkeypatch, tmp_path):
+        dashboard, _ = get_test_dashboard()
+        client = TestClient(dashboard.app)
+    
+        from dashboard.oauth_state import oauth_store
+        state = oauth_store.generate_state("reddit_oauth", "b1", "a1", "http://test")
+    
+        import yaml
+        config_file = tmp_path / "accounts.local.yaml"
+        config_file.write_text(yaml.dump({
+            "accounts": [
+                {"business_id": "b1", "account_id": "a1", "platform": "reddit"},
+                {"business_id": "b2", "account_id": "a2", "platform": "reddit"}
+            ],
+            "other_key": "preserved"
+        }))
+    
+        import pathlib
+        original_path = pathlib.Path
+        class FakePath(original_path):
+            def __new__(cls, *args, **kwargs):
+                p = str(args[0])
+                if "accounts" in p:
+                    if "local" in p:
+                        return original_path.__new__(cls, config_file)
+                    return original_path.__new__(cls, tmp_path / "not_exist")
+                return original_path.__new__(cls, *args, **kwargs)
+    
+        monkeypatch.setattr("dashboard.web.Path", FakePath)
+        monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id", "client_secret": "test_secret"})
+    
+        mock_post.return_value = MagicMock()
+        mock_post.return_value.json.return_value = {"access_token": "acc", "refresh_token": "ref_SECRET_123"}
+    
+        import logging
+        with patch.object(logging.getLogger("dashboard.web"), "info") as mock_info, \
+             patch.object(logging.getLogger("dashboard.web"), "error") as mock_error:
+    
+            response = client.get(f"/api/reddit/oauth/callback?code=CODE123&state={state}", follow_redirects=False)
+    
+            assert response.status_code == 303
+>           assert "success" in response.headers["location"], mock_error.call_args_list
+E           AssertionError: [call('Reddit OAuth account b1:a1 not found in config')]
+E           assert 'success' in '/?oauth_status=error&oauth_message=account_not_found'
+
+tests\test_reddit_oauth.py:169: AssertionError
+------------------------------ Captured log call ------------------------------
+CRITICAL dashboard.web:web.py:319 MILO_WEB_PASS not set or too weak (min 6 chars)! Set via MILO_WEB_PASS env var or config/settings.yaml web_dashboard.password
+CRITICAL dashboard.web:web.py:325 Auto-generated dashboard password: 9f4b29abd4f43a8a71640fa55d417854
+CRITICAL dashboard.web:web.py:326 Set MILO_WEB_PASS to use a permanent password
+=========================== short test summary info ===========================
+FAILED tests/test_reddit_oauth.py::test_oauth_callback_success - AssertionErr...
+============================== 1 failed in 7.38s ==============================

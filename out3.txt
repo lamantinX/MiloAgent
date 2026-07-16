@@ -1,0 +1,225 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-8.3.4, pluggy-1.6.0
+rootdir: C:\dev\MiloAgent\.worktrees\006
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.24.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, default_loop_scope=None
+collected 8 items
+
+tests\test_reddit_oauth.py ....FF.F                                      [100%]
+
+================================== FAILURES ===================================
+_______________________ test_oauth_start_endpoint_valid _______________________
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+E           AttributeError: module 'dashboard.web' has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:90: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000015D2BAFB6F0>
+
+    def test_oauth_start_endpoint_valid(monkeypatch):
+        dashboard, orch = get_test_dashboard()
+        orch.account_mgr.get_account.return_value = {"business_id": "b1", "account_id": "a1", "platform": "reddit"}
+    
+        client = TestClient(dashboard.app)
+        token = dashboard._create_session("test_user", "127.0.0.1")
+    
+>       monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id", "redirect_uri": "http://test"})
+
+tests\test_reddit_oauth.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:104: in derive_importpath
+    annotated_getattr(target, attr, ann=module)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at dashboard.web has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:92: AttributeError
+------------------------------ Captured log call ------------------------------
+CRITICAL dashboard.web:web.py:305 MILO_WEB_PASS not set or too weak (min 6 chars)! Set via MILO_WEB_PASS env var or config/settings.yaml web_dashboard.password
+CRITICAL dashboard.web:web.py:311 Auto-generated dashboard password: 7a58c90b7ac5e4080c3bf1eedb11e837
+CRITICAL dashboard.web:web.py:312 Set MILO_WEB_PASS to use a permanent password
+____________________ test_oauth_start_endpoint_no_account _____________________
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+E           AttributeError: module 'dashboard.web' has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:90: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000015D3F91E2C0>
+
+    def test_oauth_start_endpoint_no_account(monkeypatch):
+        dashboard, orch = get_test_dashboard()
+        orch.account_mgr.get_account.return_value = None
+    
+        client = TestClient(dashboard.app)
+        token = dashboard._create_session("test_user", "127.0.0.1")
+    
+>       monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id"})
+
+tests\test_reddit_oauth.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:104: in derive_importpath
+    annotated_getattr(target, attr, ann=module)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at dashboard.web has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:92: AttributeError
+------------------------------ Captured log call ------------------------------
+CRITICAL dashboard.web:web.py:305 MILO_WEB_PASS not set or too weak (min 6 chars)! Set via MILO_WEB_PASS env var or config/settings.yaml web_dashboard.password
+CRITICAL dashboard.web:web.py:311 Auto-generated dashboard password: fb0b7e98450d68fc9ab86a025f14b8b8
+CRITICAL dashboard.web:web.py:312 Set MILO_WEB_PASS to use a permanent password
+_________________________ test_oauth_callback_success _________________________
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+E           AttributeError: module 'dashboard.web' has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:90: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+mock_post = <MagicMock name='post' id='1500014186176'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000015D3FC78950>
+tmp_path = WindowsPath('C:/Users/zelen/AppData/Local/Temp/pytest-of-zelen/pytest-173/test_oauth_callback_success0')
+
+    @patch("requests.post")
+    def test_oauth_callback_success(mock_post, monkeypatch, tmp_path):
+        dashboard, _ = get_test_dashboard()
+        client = TestClient(dashboard.app)
+    
+        from dashboard.oauth_state import oauth_store
+        state = oauth_store.generate_state("reddit_oauth", "b1", "a1", "http://test")
+    
+        import yaml
+        config_file = tmp_path / "accounts.local.yaml"
+        config_file.write_text(yaml.dump({
+            "accounts": [
+                {"business_id": "b1", "account_id": "a1", "platform": "reddit"},
+                {"business_id": "b2", "account_id": "a2", "platform": "reddit"}
+            ],
+            "other_key": "preserved"
+        }))
+    
+        import pathlib
+        original_path = pathlib.Path
+        class FakePath(original_path):
+            def __new__(cls, *args, **kwargs):
+                p = str(args[0])
+                if "accounts" in p:
+                    if "local" in p:
+                        return original_path.__new__(cls, config_file)
+                    return original_path.__new__(cls, tmp_path / "not_exist")
+                return original_path.__new__(cls, *args, **kwargs)
+    
+        monkeypatch.setattr("dashboard.web.Path", FakePath)
+>       monkeypatch.setattr("dashboard.web._load_reddit_api_config", lambda: {"client_id": "test_id", "client_secret": "test_secret"})
+
+tests\test_reddit_oauth.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:104: in derive_importpath
+    annotated_getattr(target, attr, ann=module)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'dashboard.web' from 'C:\\dev\\MiloAgent\\.worktrees\\006\\dashboard\\web.py'>
+name = '_load_reddit_api_config', ann = 'dashboard.web'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at dashboard.web has no attribute '_load_reddit_api_config'
+
+C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\_pytest\monkeypatch.py:92: AttributeError
+------------------------------ Captured log call ------------------------------
+CRITICAL dashboard.web:web.py:305 MILO_WEB_PASS not set or too weak (min 6 chars)! Set via MILO_WEB_PASS env var or config/settings.yaml web_dashboard.password
+CRITICAL dashboard.web:web.py:311 Auto-generated dashboard password: 329ebc642207cc07870bc642c0c99b7e
+CRITICAL dashboard.web:web.py:312 Set MILO_WEB_PASS to use a permanent password
+============================== warnings summary ===============================
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:179: 328 warnings
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:179: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj)
+
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+..\..\..\..\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:450: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(func)
+
+tests/test_reddit_oauth.py::test_oauth_state_store_uniqueness
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\pytest_asyncio\plugin.py:1056: DeprecationWarning: 'asyncio.get_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    return asyncio.get_event_loop_policy()
+
+tests/test_reddit_oauth.py::test_oauth_start_endpoint_valid
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\twikit\__init__.py:16: DeprecationWarning: 'asyncio.WindowsSelectorEventLoopPolicy' is deprecated and slated for removal in Python 3.16
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+tests/test_reddit_oauth.py::test_oauth_start_endpoint_valid
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\twikit\__init__.py:16: DeprecationWarning: 'asyncio.set_event_loop_policy' is deprecated and slated for removal in Python 3.16
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+tests/test_reddit_oauth.py: 215 warnings
+  C:\Users\zelen\AppData\Roaming\Python\Python314\site-packages\js2py_\utils\injector.py:200: DeprecationWarning: co_lnotab is deprecated, use co_lines instead.
+    code_obj.co_firstlineno, code_obj.co_lnotab,
+
+tests/test_reddit_oauth.py::test_oauth_start_endpoint_valid
+tests/test_reddit_oauth.py::test_oauth_start_endpoint_no_account
+tests/test_reddit_oauth.py::test_oauth_callback_invalid_state
+tests/test_reddit_oauth.py::test_oauth_callback_success
+  C:\dev\MiloAgent\.worktrees\006\dashboard\web.py:209: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "ts": datetime.utcnow().strftime("%H:%M:%S"),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_reddit_oauth.py::test_oauth_start_endpoint_valid - Attribut...
+FAILED tests/test_reddit_oauth.py::test_oauth_start_endpoint_no_account - Att...
+FAILED tests/test_reddit_oauth.py::test_oauth_callback_success - AttributeErr...
+================= 3 failed, 5 passed, 558 warnings in 19.31s ==================

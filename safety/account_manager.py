@@ -337,29 +337,29 @@ class AccountManager:
             self._rotation_index[f"{platform}:{business_id}"] = best["account_id"]
             return best
     def get_account(self, platform: str, business_id: str, account_id: str) -> Optional[Dict]:
-        """Get a specific account by username (if healthy and not on cooldown)."""
+        """Get a specific account by account_id and business_id (if healthy and not on cooldown)."""
         accounts = self.load_accounts(platform)
         for acc in accounts:
-            if acc.get("username", "").lower() == username.lower():
-                key = f"{platform}:{acc.get('username', username)}"
+            if acc.get("account_id") == account_id and acc.get("business_id") == business_id:
+                key = f"{business_id}:{account_id}"
                 status = self._statuses.get(key, self.HEALTHY)
                 if status == self.BANNED:
-                    logger.warning(f"Account {username} is banned — skipping")
+                    logger.warning(f"Account {account_id} is banned — skipping")
                     return None
                 if key in self._cooldowns and datetime.utcnow() < self._cooldowns[key]:
-                    logger.warning(f"Account {username} is on cooldown — skipping")
+                    logger.warning(f"Account {account_id} is on cooldown — skipping")
                     return None
                 return acc
         return None
 
     def update_karma_cache(self, account_id: str, karma: int):
         """Store fresh karma value for an account."""
-        self._karma_cache[username] = (karma, time.time())
-        logger.debug(f"Karma cache updated: {username} = {karma}")
+        self._karma_cache[account_id] = (karma, time.time())
+        logger.debug(f"Karma cache updated: {account_id} = {karma}")
 
     def get_cached_karma(self, account_id: str) -> Optional[int]:
         """Return cached karma if fresh (< 12h), else None."""
-        entry = self._karma_cache.get(username)
+        entry = self._karma_cache.get(account_id)
         if entry and (time.time() - entry[1]) < self.KARMA_CACHE_TTL:
             return entry[0]
         return None
@@ -370,7 +370,7 @@ class AccountManager:
         Returns True if karma is sufficient OR if karma is unknown (cache miss).
         Unknown karma = don't block, let the action proceed and learn from result.
         """
-        karma = self.get_cached_karma(username)
+        karma = self.get_cached_karma(account_id)
         if karma is None:
             return True  # Unknown karma: don't block
         return karma >= self.MIN_KARMA_WRITE
@@ -381,7 +381,7 @@ class AccountManager:
         Returns dict with keys: tier (int 0-3), name, daily_cap, can_post, karma.
         Defaults to tier 0 (most conservative) when karma unknown.
         """
-        karma = self.get_cached_karma(username)
+        karma = self.get_cached_karma(account_id)
         if karma is None:
             # Unknown karma -- use conservative tier 0 defaults but allow actions
             return {"tier": 0, "name": "new", "daily_cap": 3, "can_post": False, "karma": None}
@@ -400,11 +400,11 @@ class AccountManager:
 
     def get_daily_cap(self, account_id: str) -> int:
         """Return the write-action daily cap for this account based on karma tier."""
-        return self.get_account_tier(username)["daily_cap"]
+        return self.get_account_tier(account_id)["daily_cap"]
 
     def can_post(self, account_id: str) -> bool:
         """Return True if account karma tier allows posting (not just commenting)."""
-        return self.get_account_tier(username)["can_post"]
+        return self.get_account_tier(account_id)["can_post"]
 
     def mark_cooldown(
         self,
