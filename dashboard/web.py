@@ -449,17 +449,6 @@ class WebDashboard:
             return False
         return True
 
-    async def _require_business(
-        self,
-        business_id: str = Query(..., description="Business scope"),
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)
-    ) -> dict:
-        await self._verify_token(credentials)
-        business = self.orch.business_mgr.get_business(business_id)
-        if not business:
-            raise HTTPException(status_code=404, detail="Business restricted or not found.")
-        return business
-
     async def _verify_token(
         self,
         credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),

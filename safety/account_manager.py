@@ -535,7 +535,10 @@ class AccountManager:
         elif platform == "twitter":
             base = f"{self.config_dir}/twitter_accounts"
         elif platform == "telegram":
-            base = f"{self.config_dir}/telegram_accounts"
+            # Must match load_accounts('telegram') / telegram_group_bot, which
+            # both read config/telegram_user_accounts(.local).yaml. Writing to
+            # telegram_accounts.local.yaml would persist records nothing loads.
+            base = f"{self.config_dir}/telegram_user_accounts"
         else:
             raise ValueError(f"Unknown platform: {platform}")
 
@@ -620,7 +623,8 @@ class AccountManager:
         elif platform == "twitter":
             base = f"{self.config_dir}/twitter_accounts"
         elif platform == "telegram":
-            base = f"{self.config_dir}/telegram_accounts"
+            # Match add_account / load_accounts('telegram'): telegram_user_accounts.
+            base = f"{self.config_dir}/telegram_user_accounts"
         else:
             return f"Unknown platform: {platform}"
 
@@ -653,14 +657,14 @@ class AccountManager:
                 break
 
         if not found:
-            return f"Account @{username} not found on {platform}"
+            return f"Account {account_id_or_username} not found on {platform}"
 
         data["accounts"] = accounts
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
-        logger.info(f"Disabled {platform} account: @{username}")
-        return f"Disabled @{username} on {platform}"
+        logger.info(f"Disabled {platform} account: {account_id_or_username}")
+        return f"Disabled {account_id_or_username} on {platform}"
 
     def list_all_accounts(self) -> List[Dict]:
         """List all accounts across platforms (including disabled ones)."""
