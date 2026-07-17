@@ -169,8 +169,10 @@ class FakeLoop:
                 pass
         t = threading.Thread(target=_run, daemon=True)
         t.start()
-        # give it a tiny moment to start and do its synchronous transition
-        time.sleep(0.05)
+        # Wait up to 0.5s for fast mock tasks (like success) to complete their 
+        # state transition, so subsequent asserts pass immediately. Active
+        # pending challenges will hit the timeout but keep running in background.
+        t.join(timeout=0.5)
         return FakeFuture()
 
 
