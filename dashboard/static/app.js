@@ -1304,6 +1304,9 @@ function renderManageAccounts(d) {
         ${plat==='reddit' ? hpBar(a.status) : ''}
       </div>`;
       const actions = card.querySelector('.actions-area');
+      if (plat === 'telegram' && a.auth_status === 'not_authorized') {
+        actions.appendChild(actionButton('Authorize', 'btn btn-sm primary', () => authorizeTelegram(uiState.businessId, a.account_id)));
+      }
       // Stable account id is the canonical handle; pass it as the (platform, id)
       // pair. Backend resolves account_id first, then username.
       actions.appendChild(actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.account_id || a.username)));
@@ -1635,6 +1638,152 @@ async function removeAccount(platform, username) {
   const label = username;
   if (!confirm(`Remove ${label} (${platform})?`)) return;
   try { const d=await apiTenantDelete(`/api/accounts/${platform}/${encodeURIComponent(username)}`); toast(d.message||'Done',d.ok?'success':'error'); refresh(); } catch(e){toast(e.message,'error')}
+}
+
+// ══════════════════════════════════════════════════════════════
+// TELEGRAM QR/2FA AUTH (plan 011)
+// ══════════════════════════════════════════════════════════════
+let _tqrContext = null;
+
+async function authorizeTelegram(businessId, accountId) {
+  if (!businessId || !accountId) return;
+  // Cleanup any lingering state
+  closeTelegramQR();
+  
+  _tqrContext = { businessId, accountId, challengeId: null, timer: null };
+  const modal = document.getElementById('modal-telegramQR');
+  if (modal) modal.classList.add('show');
+  
+  const statusEl = document.getElementById('tqrStatus');
+  const img = document.getElementById('tqrImage');
+  if (statusEl) statusEl.textContent = 'Generating QR code...';
+  if (img) img.src = '';
+  
+  try {
+    const d = await apiTenantPost(`/api/businesses/${encodeURIComponent(businessId)}/accounts/${encodeURIComponent(accountId)}/telegram/qr-login`, {});
+    _tqrContext.challengeId = d.challenge_id;
+    _handleTqrDto(d);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+    toast('QR login failed: ' + e.message, 'error');
+  }
+}
+
+function _handleTqrDto(d) {
+  if (!_tqrContext || _tqrContext.challengeId !== d.challenge_id) return;
+  
+  const statusEl = document.getElementById('tqrStatus');
+  const imgWrap = document.getElementById('tqrImageWrap');
+  const img = document.getElementById('tqrImage');
+  const faWrap = document.getElementById('tqr2faWrap');
+  
+  if (d.status === 'waiting_scan') {
+    if (imgWrap) imgWrap.style.display = 'inline-block';
+    if (faWrap) faWrap.style.display = 'none';
+    if (img && d.qr_png_b64) img.src = 'data:image/png;base64,' + d.qr_png_b64;
+    if (statusEl) {
+      const expires = Math.max(0, Math.floor(d.expires_at - (Date.now()/1000)));
+      statusEl.textContent = `Awaiting scan via Telegram mobile app (expires in ${expires}s)`;
+    }
+  } 
+  else if (d.status === 'password_required') {
+    if (imgWrap) imgWrap.style.display = 'none';
+    if (img) img.src = ''; // clear image memory
+    if (faWrap) faWrap.style.display = 'block';
+    if (statusEl) {
+      if (d.attempts_remaining !== null) {
+        statusEl.innerHTML = `<span style="color:var(--yellow)">2FA required. Attempts remaining: ${d.attempts_remaining}</span>`;
+      } else {
+        statusEl.innerHTML = `<span style="color:var(--yellow)">2FA required.</span>`;
+      }
+    }
+  }
+  else if (d.status === 'expired') {
+    // Refresh automatically
+    _refreshTelegramQR();
+    return;
+  }
+  else if (d.status === 'authorized') {
+    toast('Telegram session authorized successfully!', 'success');
+    closeTelegramQR();
+    refresh();
+    return;
+  }
+  else if (d.status === 'failed' || d.status === 'cancelled') {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">Authentication ${d.status}.</span>`;
+    // We let the user see the failure, then close manually.
+    if (imgWrap) imgWrap.style.display = 'none';
+    if (img) img.src = '';
+    if (faWrap) faWrap.style.display = 'none';
+    return; // stop polling
+  }
+  
+  // Schedule next poll
+  if (_tqrContext.timer) clearTimeout(_tqrContext.timer);
+  const interval = (d.poll_interval || 2.0) * 1000;
+  // Use a timeout rather than interval to avoid overlap.
+  _tqrContext.timer = setTimeout(pollTelegramQR, interval);
+}
+
+async function _refreshTelegramQR() {
+  if (!_tqrContext || !_tqrContext.challengeId) return;
+  const statusEl = document.getElementById('tqrStatus');
+  if (statusEl) statusEl.textContent = 'QR expired. Requesting new QR...';
+  try {
+    const d = await apiTenantPost(`/api/businesses/${encodeURIComponent(_tqrContext.businessId)}/accounts/${encodeURIComponent(_tqrContext.accountId)}/telegram/qr-refresh?challenge_id=${encodeURIComponent(_tqrContext.challengeId)}`, {});
+    _handleTqrDto(d);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">Refresh failed: ${esc(e.message)}</span>`;
+  }
+}
+
+async function pollTelegramQR() {
+  if (!_tqrContext || !_tqrContext.challengeId) return;
+  try {
+    const d = await apiTenant(`/api/businesses/${encodeURIComponent(_tqrContext.businessId)}/accounts/${encodeURIComponent(_tqrContext.accountId)}/telegram/qr-status?challenge_id=${encodeURIComponent(_tqrContext.challengeId)}`);
+    _handleTqrDto(d);
+  } catch(e) {
+    // if polling fails, we don't necessarily abort immediately, but we log it.
+    if (_tqrContext.timer) clearTimeout(_tqrContext.timer);
+    _tqrContext.timer = setTimeout(pollTelegramQR, 5000); // back off
+  }
+}
+
+async function submitTelegram2FA() {
+  if (!_tqrContext || !_tqrContext.challengeId) return;
+  const passEl = document.getElementById('tqrPassword');
+  const password = passEl ? passEl.value : '';
+  if (!password) { toast('Password required','error'); return; }
+  
+  const statusEl = document.getElementById('tqrStatus');
+  if (statusEl) statusEl.textContent = 'Verifying 2FA...';
+  
+  try {
+    const d = await apiTenantPost(`/api/businesses/${encodeURIComponent(_tqrContext.businessId)}/telegram-login/${encodeURIComponent(_tqrContext.challengeId)}/2fa`, { password });
+    _handleTqrDto(d);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">2FA submit failed: ${esc(e.message)}</span>`;
+  } finally {
+    if (passEl) passEl.value = ''; // never keep the password around
+  }
+}
+
+function closeTelegramQR() {
+  if (_tqrContext) {
+    if (_tqrContext.timer) clearTimeout(_tqrContext.timer);
+    if (_tqrContext.challengeId) {
+      // Best-effort cancel signal to backend. Not awaited.
+      apiTenantPost(`/api/businesses/${encodeURIComponent(_tqrContext.businessId)}/accounts/${encodeURIComponent(_tqrContext.accountId)}/telegram/qr-cancel?challenge_id=${encodeURIComponent(_tqrContext.challengeId)}`, {}).catch(()=>{});
+    }
+  }
+  _tqrContext = null;
+  const img = document.getElementById('tqrImage');
+  if (img) img.src = '';
+  const passEl = document.getElementById('tqrPassword');
+  if (passEl) passEl.value = '';
+  
+  const m = document.getElementById('modal-telegramQR');
+  if(m) m.classList.remove('show');
 }
 
 // ══════════════════════════════════════════════════════════════

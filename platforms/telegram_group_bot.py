@@ -63,6 +63,21 @@ def _run_tg_async(coro, timeout: int = 120):
     return future.result(timeout=timeout)
 
 
+def _schedule_tg_async(coro):
+    """Schedule a coroutine on the persistent Telegram loop WITHOUT blocking.
+
+    Returns the concurrent.futures.Future so the caller can cancel/inspect it
+    (e.g. the QR-login background wait task in plan 011). The request thread is
+    not blocked waiting for the coroutine to finish.
+    """
+    loop = _get_tg_loop()
+    if loop.is_closed():
+        global _tg_loop
+        _tg_loop = None
+        loop = _get_tg_loop()
+    return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
 class TelegramGroupBot(BasePlatform):
     """Telegram group scanner + engagement bot using Telethon.
 

@@ -1,7 +1,9 @@
 """Account rotation and health management."""
 
 import os
+import stat
 import logging
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -665,6 +667,82 @@ class AccountManager:
 
         logger.info(f"Disabled {platform} account: {account_id_or_username}")
         return f"Disabled {account_id_or_username} on {platform}"
+
+    def set_telegram_authorized(
+        self,
+        business_id: str,
+        account_id: str,
+        identity: dict,
+    ) -> bool:
+        """Atomically flip a Telegram account to authorized + enabled (plan 011).
+
+        Called only after Telethon confirms a personal user (me.bot == False)
+        and the session is usable. Persists non-secret identity metadata only
+        (username/first_name/phone). Never writes api_hash/password/session bytes.
+        Returns True on success, False if the account was not found.
+        """
+        base = f"{self.config_dir}/telegram_user_accounts"
+        local_path = f"{base}.local.yaml"
+        default_path = f"{base}.yaml"
+        path = local_path if os.path.exists(local_path) else default_path
+        try:
+            with open(path) as f:
+                data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            return False
+        accounts = data.get("accounts", [])
+        found = False
+        for acc in accounts:
+            if (
+                acc.get("account_id") == account_id
+                and acc.get("business_id") == business_id
+                and acc.get("account_type") == "user"
+            ):
+                acc["auth_status"] = "authorized"
+                acc["enabled"] = True
+                # Non-secret identity only, for display/routing.
+                if identity:
+                    if identity.get("username"):
+                        acc["username"] = identity["username"]
+                    if identity.get("phone"):
+                        acc["phone"] = identity["phone"]
+                    if identity.get("first_name"):
+                        acc["display_name"] = identity["first_name"]
+                found = True
+                break
+        if not found:
+            return False
+        data["accounts"] = accounts
+        # Atomic write to avoid a torn read by the watcher.
+        tmpfd, tmpname = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tg_auth.", suffix=".tmp")
+        try:
+            with os.fdopen(tmpfd, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            try:
+                os.chmod(tmpname, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+            os.replace(tmpname, path)
+        finally:
+            if os.path.exists(tmpname):
+                try:
+                    os.unlink(tmpname)
+                except OSError:
+                    pass
+        logger.info("Telegram account %s authorized for business %s", account_id, business_id)
+        return True
+
+    def get_telegram_account(self, business_id: str, account_id: str) -> Optional[dict]:
+        """Return the raw telegram account record (incl. secrets) for auth checks.
+
+        Used by the QR/2FA route handlers to validate auth_status/account_type
+        and read api_id/api_hash/session_file. Never returned to the browser.
+        """
+        accounts = self.load_accounts("telegram")
+        for acc in accounts:
+            if acc.get("account_id") == account_id and acc.get("business_id") == business_id:
+                return acc
+        return None
 
     def list_all_accounts(self) -> List[Dict]:
         """List all accounts across platforms (including disabled ones)."""

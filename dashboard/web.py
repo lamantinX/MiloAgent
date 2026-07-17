@@ -40,10 +40,10 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 try:
     from passlib.context import CryptContext
@@ -245,6 +245,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class TwoFactorRequest(BaseModel):
+    """2FA password body for Telegram QR+2FA (plan 011).
+
+    SecretStr so the password is never logged by pydantic repr and is not
+    accidentally serialized into logs. The handler reads .get_secret_value()
+    once and passes it straight to Telethon; it is never stored.
+    """
+    password: SecretStr
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     url: str = Field(..., min_length=1)
@@ -383,6 +393,24 @@ class WebDashboard:
         self._sampler_thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._sampler_thread.start()
 
+        # Telegram QR-login challenge manager (plan 011). Runs Telethon on the
+        # dedicated persistent loop from telegram_group_bot; never touches the
+        # resource-sampler thread with async clients. In-memory + bounded.
+        try:
+            from dashboard.telegram_auth import TelegramAuthChallengeManager
+            from platforms.telegram_group_bot import _schedule_tg_async, _run_tg_async
+            # block_on_tg_loop: short-lived connect/qr_login/sign_in (request waits).
+            # run_on_tg_loop:   fire-and-forget background wait() task (returns Future).
+            self._tg_auth = TelegramAuthChallengeManager(
+                block_on_tg_loop=_run_tg_async,
+                run_on_tg_loop=_schedule_tg_async,
+            )
+            self._tg_run_blocking = _run_tg_async
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Telegram auth challenge manager disabled: %s", e)
+            self._tg_auth = None
+            self._tg_run_blocking = None
+
         self._setup_routes()
         self._setup_static()
         self._start_time = time.time()
@@ -420,6 +448,13 @@ class WebDashboard:
                                if now - v["created_at"] > self._session_ttl]
                     for k in expired:
                         del self._sessions[k]
+                    # Also reap expired QR challenges + disconnect matching temp clients.
+                    # Never touches async clients directly (safe from background thread).
+                    if getattr(self, "_tg_auth", None) is not None:
+                        try:
+                            self._tg_auth._purge_expired(now)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.debug(f"Resource sampler error: {e}")
             time.sleep(5)
@@ -467,6 +502,84 @@ class WebDashboard:
         if not business:
             raise HTTPException(status_code=404, detail="Business restricted or not found.")
         return business
+
+    async def _require_principal(
+        self,
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+    ) -> str:
+        """Return a stable server-side session principal id (plan 011).
+
+        The raw bearer token itself is the opaque principal handle; it is never
+        logged, never placed in a challenge DTO, and never persisted to disk.
+        Challenges bind to it so a different logged-in operator cannot poll or
+        drive someone else's QR/2FA flow.
+        """
+        if not credentials or not self._validate_session(credentials.credentials):
+            raise HTTPException(status_code=401, detail="Invalid or expired session")
+        return credentials.credentials
+
+    # ── Telegram QR/2FA helpers (plan 011) ───────────────────────────
+    def _require_business_exists(self, business_id: str) -> None:
+        """Assert the business exists; used by QR/2FA path-param routes.
+
+        These routes take business_id as a path parameter, so they cannot reuse
+        the Query-based _require_business dependency (FastAPI rejects Query on a
+        path param). We validate the business inline here.
+        """
+        if not self.orch.business_mgr.get_business(business_id):
+            raise HTTPException(status_code=404, detail="Business restricted or not found.")
+
+    def _enforce_tls_or_loopback(self, request: Request) -> None:
+        """Reject non-loopback HTTP; allow loopback HTTP for dev (plan 011)."""
+        client = request.client
+        host = client.host if client else ""
+        scheme = request.url.scheme
+        forwarded = request.headers.get("x-forwarded-proto", "").lower()
+        # Trust forwarded scheme only from a configured proxy host list.
+        trusted_proxies = set(
+            str(os.environ.get("MILO_TRUSTED_PROXIES", "")).split(",")
+        ) - {""}
+        is_loopback = host in ("127.0.0.1", "::1", "localhost", "")
+        is_https = scheme == "https"
+        if forwarded == "https" and (not trusted_proxies or host in trusted_proxies):
+            is_https = True
+        if not is_https and not is_loopback:
+            raise HTTPException(
+                status_code=426,
+                detail="Telegram QR/2FA requires HTTPS for remote clients.",
+            )
+
+    def _no_store_headers(self, response) -> None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+
+    def _tg_auth_or_503(self):
+        if self._tg_auth is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Telegram QR auth is unavailable (no challenge manager).",
+            )
+        return self._tg_auth
+
+    def _validate_tg_account_for_qr(self, business_id: str, account_id: str) -> dict:
+        """Load the telegram account and assert it is authorizable right now.
+
+        Returns the raw account record (contains api_id/api_hash/session_file).
+        Never returned to the browser.
+        """
+        acc = self.orch.account_mgr.get_telegram_account(business_id, account_id)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Telegram account not found in this business.")
+        if acc.get("account_type") != "user":
+            raise HTTPException(status_code=400, detail="Only personal user accounts can be authorized by QR.")
+        if acc.get("auth_status") == "authorized":
+            raise HTTPException(status_code=409, detail="Account is already authorized.")
+        if acc.get("auth_status") != "not_authorized":
+            raise HTTPException(status_code=409, detail="Account is not in an authorizable state.")
+        if not acc.get("api_id") or not acc.get("api_hash"):
+            raise HTTPException(status_code=400, detail="Account is missing API credentials.")
+        return acc
 
     # ── Static files ─────────────────────────────────────────
 
@@ -671,6 +784,134 @@ class WebDashboard:
                 raise HTTPException(status_code=404, detail=str(e))
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
+
+        # ════════════════════════════════════════════════════════════
+        # Telegram QR + 2FA authentication (plan 011)
+        # Every response is no-store. Remote (non-loopback) clients must use
+        # HTTPS; loopback HTTP is allowed for local development. The QR PNG,
+        # api_hash, session path, bearer token, and 2FA password are never
+        # returned/logged/persisted.
+        # ════════════════════════════════════════════════════════════
+
+        @app.post("/api/businesses/{business_id}/accounts/{account_id}/telegram/qr-login")
+        async def tg_qr_login(
+            business_id: str,
+            account_id: str,
+            request: Request,
+            principal: str = Depends(self._require_principal),
+        ):
+            self._enforce_tls_or_loopback(request)
+            self._require_business_exists(business_id)
+            mgr = self._tg_auth_or_503()
+            acc = self._validate_tg_account_for_qr(business_id, account_id)
+            from dashboard.telegram_auth import session_path_for
+            session_file = acc.get("session_file") or session_path_for(business_id, account_id)
+            try:
+                dto = mgr.start(
+                    business_id=business_id,
+                    account_id=account_id,
+                    session_principal=principal,
+                    api_id=acc.get("api_id"),
+                    api_hash=acc.get("api_hash"),
+                    session_file=session_file,
+                )
+            except RuntimeError as e:
+                raise HTTPException(status_code=503, detail=str(e))
+            response = JSONResponse(dto.to_dict())
+            self._no_store_headers(response)
+            return response
+
+        @app.get("/api/businesses/{business_id}/accounts/{account_id}/telegram/qr-status")
+        async def tg_qr_status(
+            business_id: str,
+            account_id: str,
+            challenge_id: str = Query(...),
+            request: Request = None,
+            principal: str = Depends(self._require_principal),
+        ):
+            self._enforce_tls_or_loopback(request)
+            self._require_business_exists(business_id)
+            mgr = self._tg_auth_or_503()
+            dto = mgr.status(challenge_id, business_id, account_id, principal)
+            if dto is None:
+                raise HTTPException(status_code=404, detail="Challenge not found or not bound to this session.")
+            # If the challenge reached authorized, finalize the account record
+            # exactly once: persist non-secret identity + flip enabled.
+            if dto.status == "authorized":
+                identity = mgr.identity(challenge_id) or {}
+                try:
+                    self.orch.account_mgr.set_telegram_authorized(business_id, account_id, identity)
+                except Exception as e:
+                    logger.debug("set_telegram_authorized failed: %s", type(e).__name__)
+            response = JSONResponse(dto.to_dict())
+            self._no_store_headers(response)
+            return response
+
+        @app.post("/api/businesses/{business_id}/accounts/{account_id}/telegram/qr-refresh")
+        async def tg_qr_refresh(
+            business_id: str,
+            account_id: str,
+            challenge_id: str = Query(...),
+            request: Request = None,
+            principal: str = Depends(self._require_principal),
+        ):
+            self._enforce_tls_or_loopback(request)
+            self._require_business_exists(business_id)
+            mgr = self._tg_auth_or_503()
+            dto = mgr.refresh(challenge_id, business_id, account_id, principal)
+            if dto is None:
+                raise HTTPException(status_code=404, detail="Challenge not found, not bound, or not expired.")
+            response = JSONResponse(dto.to_dict())
+            self._no_store_headers(response)
+            return response
+
+        @app.post("/api/businesses/{business_id}/accounts/{account_id}/telegram/qr-cancel")
+        async def tg_qr_cancel(
+            business_id: str,
+            account_id: str,
+            challenge_id: str = Query(...),
+            request: Request = None,
+            principal: str = Depends(self._require_principal),
+        ):
+            self._enforce_tls_or_loopback(request)
+            self._require_business_exists(business_id)
+            mgr = self._tg_auth_or_503()
+            ok = mgr.cancel(challenge_id, business_id, account_id, principal)
+            if not ok:
+                raise HTTPException(status_code=404, detail="Challenge not found or not bound to this session.")
+            return {"ok": True}
+
+        @app.post("/api/businesses/{business_id}/telegram-login/{challenge_id}/2fa")
+        async def tg_2fa_submit(
+            business_id: str,
+            challenge_id: str,
+            body: TwoFactorRequest,
+            request: Request,
+            principal: str = Depends(self._require_principal),
+        ):
+            self._enforce_tls_or_loopback(request)
+            self._require_business_exists(business_id)
+            mgr = self._tg_auth_or_503()
+            # The 2FA route has no account_id in the path; resolve it from the
+            # challenge binding (still bound to business + session principal).
+            account_id = mgr.lookup_challenge(challenge_id, business_id, principal)
+            if account_id is None:
+                raise HTTPException(status_code=404, detail="Challenge not found or not bound to this session.")
+            # Password is request-scoped: read once, pass straight to Telethon,
+            # drop the reference. Never logged, never stored, never returned.
+            password = body.password.get_secret_value()
+            dto = mgr.submit_password(challenge_id, business_id, account_id, principal, password)
+            if dto.status == "authorized":
+                identity = mgr.identity(challenge_id) or {}
+                try:
+                    self.orch.account_mgr.set_telegram_authorized(business_id, account_id, identity)
+                except Exception as e:
+                    logger.debug("set_telegram_authorized failed: %s", type(e).__name__)
+            del password
+            response = JSONResponse(dto.to_dict())
+            self._no_store_headers(response)
+            return response
+
         # ── GET /api/projects ──────────────────────────────
         @app.get("/api/projects")
         async def get_projects(biz=Depends(self._require_business)):
