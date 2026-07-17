@@ -158,15 +158,19 @@ class FakeLoop:
         """
         self.scheduled.append(coro)
         import concurrent.futures
+        import threading
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_run_coro_sync, coro)
+        # Use an ad-hoc thread instead of ThreadPoolExecutor so we can make
+        # it a daemon thread. A non-daemon thread blocks pytest teardown.
+        def _run():
             try:
-                fut.result(timeout=0.5)
-            except concurrent.futures.TimeoutError:
-                pass  # long-running wait task; expected for ACTIVE challenges
+                _run_coro_sync(coro)
             except Exception:
                 pass
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        # give it a tiny moment to start and do its synchronous transition
+        time.sleep(0.05)
         return FakeFuture()
 
 

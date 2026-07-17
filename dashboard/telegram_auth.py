@@ -110,6 +110,7 @@ class _Challenge:
     poll_interval: float = DEFAULT_POLL_INTERVAL
     client: Any = None  # Telethon client (or fake); never exposed
     qr_login: Any = None  # QRLogin object; never exposed
+    qr_png_b64: Optional[str] = None
     wait_future: Any = None  # concurrent.futures.Future for the wait task
     password_attempts: int = 0
     # Identity captured on success for the finalize step (non-secret display data).
@@ -304,6 +305,7 @@ class TelegramAuthChallengeManager:
                 poll_interval=DEFAULT_POLL_INTERVAL,
                 client=client,
                 qr_login=qr_login,
+                qr_png_b64=qr_png_b64,
             )
             self._store[challenge_id] = ch
             self._by_account[ak] = challenge_id

@@ -24,7 +24,7 @@ The target model is deliberately explicit:
 | 008 | Replace unsafe dynamic inline dashboard handlers | P2 | S | 001 | DONE — `codex/improve-008-dashboard-events` @ e071589 (refactored 4 sites to use safe DOM actionButton helper) |
 | 009 | Add business-scoped dashboard APIs and multi-account CRUD | P1 | L | 004, 005, 006, 008 | DONE |
 | 010 | Add the business switcher and business-aware account UI | P1 | L | 009 | DONE — `codex/improve-010-business-switcher-ui` (browser-local switcher, apiTenant scope, grouped accounts, platform-aware onboarding, business create/archive) |
-| 011 | Add Telegram QR login with optional 2FA password | P1 | L | 005, 009, 010 | TODO |
+| 011 | Add Telegram QR login with optional 2FA password | P1 | L | 005, 009, 010 | DONE — `codex/improve-011-telegram-qr-2fa` (secure QR auth challenge protocol, 2FA limit, account identity capture, no leaked session/bearer secrets) |
 | 012 | Document the business, product, account, and Telegram workflows | P2 | M | 011 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
