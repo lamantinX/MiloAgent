@@ -70,12 +70,17 @@ def test_action_functions_still_defined():
 
 
 def test_action_buttons_wired_for_each_site():
-    """Each of the four sites must wire its button through ``actionButton``."""
+    """Each of the four sites must wire its button through ``actionButton``.
+
+    Plan 010 changed the account-action argument to prefer the stable
+    ``account_id`` (with ``username`` as a legacy fallback); the safe DOM wiring
+    pattern from plan 008 is unchanged. Project/cookie actions keep their form.
+    """
     src = _read_app_js()
     for call in (
         "actionButton('Edit', 'btn btn-sm', () => editProject(p.name))",
         "actionButton('Delete', 'btn btn-sm danger', () => deleteProject(p.name))",
-        "actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.username))",
+        "actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.account_id || a.username))",
         "actionButton('Delete', 'btn btn-sm danger', () => deleteCookies(c.platform, c.username))",
     ):
         assert call in src, f"action button wiring missing: {call!r}"

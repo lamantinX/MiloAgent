@@ -14,8 +14,10 @@ any legacy product is a hard error.
 
 import os
 import re
+import stat
 import time
 import logging
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple
@@ -157,6 +159,63 @@ class BusinessManager:
 
         self.reload()
         return str(filepath)
+
+    def update_business(
+        self,
+        business_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> str:
+        """Update editable fields of an existing business (plan 010).
+
+        Only the supplied fields are changed. The immutable ``id`` is never
+        rewritten. Uses atomic tempfile + os.replace to avoid a torn write.
+        Returns the filepath. Raises ValueError if the business does not exist.
+        """
+        filepath = self.businesses_dir / f"{business_id}.yaml"
+        if not filepath.exists():
+            raise ValueError(f"Business not found: {business_id}")
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        biz = dict(data.get("business") or {})
+        if name is not None:
+            biz["name"] = name
+        if description is not None:
+            biz["description"] = description
+        if enabled is not None:
+            biz["enabled"] = bool(enabled)
+        biz["id"] = business_id
+        data["business"] = biz
+        # Atomic write so a watcher mid-read never sees a partial file.
+        tmpfd, tmpname = tempfile.mkstemp(
+            dir=str(self.businesses_dir), prefix=f".{business_id}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmpfd, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            try:
+                os.chmod(tmpname, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass  # restrictive perms not supported on this platform
+            os.replace(tmpname, filepath)
+        finally:
+            if os.path.exists(tmpname):
+                try:
+                    os.unlink(tmpname)
+                except OSError:
+                    pass
+        self.reload()
+        return str(filepath)
+
+    def archive_business(self, business_id: str) -> str:
+        """Disable a business without deleting its data (plan 010 Step 6).
+
+        Archival flips ``enabled`` to False. Its products/accounts keep their
+        data; they simply stop loading until the business is re-enabled. Returns
+        the filepath. Raises ValueError if the business does not exist.
+        """
+        return self.update_business(business_id, enabled=False)
 
     # ── Reload / load ─────────────────────────────────────────────────
 

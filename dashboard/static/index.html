@@ -49,6 +49,16 @@
       <span class="mc-logo">MILOAGENT</span>
       <span class="mc-badge" id="mcVersion">v6.0</span>
       <span class="mc-badge" id="mcMode">server</span>
+      <!-- Business switcher (plan 010): browser-local view context only.
+           Does NOT mutate orchestrator global state; background jobs run across
+           all configured businesses regardless of this selection. -->
+      <label class="mc-business-switcher" for="businessSelect">
+        <span class="biz-label">Business</span>
+        <select id="businessSelect" class="form-input biz-select" aria-label="Active business" onchange="onBusinessSelectChange()">
+          <option value="">Choose business</option>
+        </select>
+        <span class="biz-badge" id="businessBadge">No business</span>
+      </label>
     </div>
     <div class="mc-right">
       <div class="mc-status">
@@ -359,14 +369,19 @@
         <h2>All Scheduled Jobs</h2>
         <div id="scheduleListFull" style="max-height:350px;overflow-y:auto"></div>
       </div>
-      <!-- Projects -->
+      <!-- Business management (plan 010) -->
+      <div class="card full">
+        <h2>Businesses <button class="btn btn-sm primary" onclick="openModal('addBusiness')">+ Add</button></h2>
+        <div id="businessesManage"></div>
+      </div>
+      <!-- Products (formerly "Projects"; a product belongs to one business) -->
       <div class="card">
-        <h2>Projects <button class="btn btn-sm primary" onclick="openModal('addProject')">+ Add</button></h2>
+        <h2>Products <button class="btn btn-sm primary" data-tenant-control onclick="openModal('addProject')">+ Add</button></h2>
         <div id="projectsManage"></div>
       </div>
       <!-- Accounts -->
       <div class="card">
-        <h2>Accounts <button class="btn btn-sm primary" onclick="openModal('addAccount')">+ Add</button></h2>
+        <h2>Accounts <button class="btn btn-sm primary" data-tenant-control onclick="openModal('addAccount')">+ Add</button></h2>
         <div id="accountsManage"></div>
       </div>
       <!-- Cookies -->
@@ -432,34 +447,75 @@
   </div>
 </div>
 
-<!-- Add Account Modal -->
+<!-- Add Account Modal (platform-aware, plan 010) -->
 <div id="modal-addAccount" class="modal-overlay" onclick="if(event.target===this)closeModal()">
   <div class="modal">
     <h3>Add New Account</h3>
     <div class="form-row">
       <div class="form-group"><label>Platform *</label>
-        <select class="form-input" id="aPlat"><option value="reddit">Reddit</option><option value="telegram">Telegram</option></select>
+        <select class="form-input" id="aPlat" onchange="onAccountPlatformChange()">
+          <option value="reddit">Reddit</option>
+          <option value="telegram">Telegram</option>
+        </select>
       </div>
-      <div class="form-group"><label>Username *</label><input class="form-input" id="aUser"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>Password *</label><input class="form-input" id="aPass" type="password"></div>
-      <div class="form-group"><label>Email</label><input class="form-input" id="aEmail"></div>
-    </div>
-    <div class="form-row">
       <div class="form-group"><label>Persona</label>
         <select class="form-input" id="aPersona"><option>helpful_casual</option><option>tech_expert</option><option>friendly_newbie</option><option>industry_insider</option></select>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-group" style="flex:1">
-        <label>Assign to Projects <span style="color:var(--text3);font-size:11px">(comma-separated, e.g. SoClose,HeyyBlog)</span></label>
-        <input class="form-input" id="aProjects" placeholder="Leave empty to assign to all projects">
+
+    <!-- Reddit fields -->
+    <div id="acctFieldsReddit" class="acct-platform-fields">
+      <div class="form-row">
+        <div class="form-group"><label>Username *</label><input class="form-input" id="aUser" autocomplete="off"></div>
+        <div class="form-group"><label>Password *</label><input class="form-input" id="aPass" type="password" autocomplete="new-password"></div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label>Email</label><input class="form-input" id="aEmail" autocomplete="off"></div>
+      </div>
+      <div class="acct-hint">After adding, paste cookies or start OAuth from the account card.</div>
+    </div>
+
+    <!-- Telegram fields: personal user session (Telethon), NOT a bot. -->
+    <div id="acctFieldsTelegram" class="acct-platform-fields" style="display:none">
+      <div class="acct-hint" style="color:var(--accent)">
+        Personal account (Telethon user session), not a bot. Authorization happens
+        separately by QR after the record is created.
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>API ID *</label><input class="form-input" id="aApiId" autocomplete="off"></div>
+        <div class="form-group"><label>API Hash *</label><input class="form-input" id="aApiHash" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Phone <span style="color:var(--text3);font-size:11px">(optional)</span></label><input class="form-input" id="aPhone" placeholder="+1555..." autocomplete="off"></div>
+        <div class="form-group"><label>Display name</label><input class="form-input" id="aDisplayName" autocomplete="off"></div>
+      </div>
+    </div>
+
+    <!-- Product assignment: multi-select from the current business only -->
+    <div class="form-group">
+      <label>Assign to products <span style="color:var(--text3);font-size:11px">(current business only)</span></label>
+      <div id="aProjectsList" class="checklist"></div>
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitAccount()">Add Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Business Modal (plan 010) -->
+<div id="modal-addBusiness" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h3>Add New Business</h3>
+    <div class="acct-hint">A business is an isolated workspace. It owns products and service accounts.</div>
+    <div class="form-row">
+      <div class="form-group"><label>ID * <span style="color:var(--text3);font-size:11px">(slug: a-z0-9_-)</span></label><input class="form-input" id="bId" autocomplete="off"></div>
+      <div class="form-group"><label>Name *</label><input class="form-input" id="bName" autocomplete="off"></div>
+    </div>
+    <div class="form-group"><label>Description</label><input class="form-input" id="bDesc" autocomplete="off"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitBusiness()">Create Business</button>
     </div>
   </div>
 </div>

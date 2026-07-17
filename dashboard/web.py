@@ -607,7 +607,12 @@ class WebDashboard:
                         tier_info = {}
                         if platform == "reddit":
                             tier_info = self.orch.account_mgr.get_account_tier(username)
+                        # Plan 010: surface the stable account id, auth status, and
+                        # assigned products so the UI can group records and address
+                        # them without username ambiguity. No secret fields here.
                         result.append({
+                            "account_id": acc.get("account_id"),
+                            "business_id": acc.get("business_id"),
                             "username": username,
                             "platform": platform,
                             "total_24h": sum(types.values()),
@@ -620,6 +625,9 @@ class WebDashboard:
                             "persona": acc.get("persona", ""),
                             "email": acc.get("email", ""),
                             "enabled": acc.get("enabled", True),
+                            "auth_status": acc.get("auth_status"),
+                            "account_type": acc.get("account_type"),
+                            "assigned_projects": acc.get("assigned_projects", acc.get("assigned_projects", []) or []),
                             "karma": tier_info.get("karma"),
                             "tier": tier_info.get("tier", 0),
                             "tier_name": tier_info.get("name", "new"),
@@ -649,6 +657,18 @@ class WebDashboard:
                 return {"ok": True, "business_id": body.business_id}
             except ValueError as e:
                 raise HTTPException(status_code=409, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        # ── POST /api/businesses/{business_id}/archive ─────
+        # Plan 010 Step 6: soft archive (disable). Products/accounts keep data.
+        @app.post("/api/businesses/{business_id}/archive")
+        async def archive_business(business_id: str, _=Depends(self._verify_token)):
+            try:
+                self.orch.business_mgr.archive_business(business_id)
+                return {"ok": True, "business_id": business_id}
+            except ValueError as e:
+                raise HTTPException(status_code=404, detail=str(e))
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         # ── GET /api/projects ──────────────────────────────

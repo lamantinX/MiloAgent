@@ -276,6 +276,27 @@ function emptyState(icon, title, desc) {
 // ══════════════════════════════════════════════════════════════
 // API HELPERS
 // ══════════════════════════════════════════════════════════════
+// Business selection is browser-local view context (plan 010). It never mutates
+// orchestrator global state; background jobs keep running across all businesses.
+const BUSINESS_KEY = 'milo_business_v1';
+const uiState = {
+  businessId: null,       // selected business id, or null
+  generation: 0,          // bumped on every switch; late responses are dropped
+};
+let _tenantAbort = null;  // AbortController for in-flight tenant requests
+
+function currentBusinessId() { return uiState.businessId; }
+function hasBusinessScope() { return !!uiState.businessId; }
+
+// Append ?business_id=<sel> (merging with any existing query string).
+// Returns the input path unchanged when no business is selected.
+function withBusinessScope(path) {
+  if (!uiState.businessId) return path;
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  return path + sep + 'business_id=' + encodeURIComponent(uiState.businessId);
+}
+
+// Global helpers: server/CPU/RAM/scheduler/business-list/auth. Never scoped.
 async function api(path) {
   const r = await fetch(path, {headers:{'Authorization':'Bearer '+TOKEN}});
   if (r.status===401) { logout(); throw new Error('Unauthorized'); }
@@ -299,9 +320,173 @@ async function apiDelete(path) {
   return r.json();
 }
 
+// Tenant helpers: every call appends the selected business_id. A response from
+// a previous generation (stale business) is dropped. NOTE: AbortController
+// cancellation is wired but cannot be runtime-asserted in the current plain-text
+// test harness (no jsdom); see plans/010-business-switcher-ui.md STOP note.
+function _tenantSignal() {
+  if (_tenantAbort) { try { _tenantAbort.abort(); } catch(e){} }
+  _tenantAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  return _tenantAbort ? _tenantAbort.signal : undefined;
+}
+async function apiTenant(path) {
+  const gen = uiState.generation;
+  const r = await fetch(withBusinessScope(path), {headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()});
+  if (uiState.generation !== gen) { throw new Error('stale_business'); }
+  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+async function apiTenantPost(path, body) {
+  const gen = uiState.generation;
+  const opts = {method:'POST', headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()};
+  if (body) { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  const r = await fetch(withBusinessScope(path), opts);
+  if (uiState.generation !== gen) { throw new Error('stale_business'); }
+  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+async function apiTenantPut(path, body) {
+  const gen = uiState.generation;
+  const r = await fetch(withBusinessScope(path), {method:'PUT', headers:{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body), signal:_tenantSignal()});
+  if (uiState.generation !== gen) { throw new Error('stale_business'); }
+  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+async function apiTenantDelete(path) {
+  const gen = uiState.generation;
+  const r = await fetch(withBusinessScope(path), {method:'DELETE', headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()});
+  if (uiState.generation !== gen) { throw new Error('stale_business'); }
+  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+
 // ══════════════════════════════════════════════════════════════
-// HELPERS
+// BUSINESS CONTEXT (plan 010)
 // ══════════════════════════════════════════════════════════════
+// Selection is browser-local only. Persisted under a versioned localStorage key.
+// On switch we bump a generation counter, abort stale tenant fetches, clear
+// tenant panels, and re-render. Late responses whose generation differs are
+// dropped inside the apiTenant* helpers.
+async function loadBusinesses() {
+  const sel = document.getElementById('businessSelect');
+  if (!sel) return [];
+  let list = [];
+  try { list = await api('/api/businesses') || []; } catch(e) { list = []; }
+  // Render options
+  const chosen = sel.value || '';
+  sel.innerHTML = '<option value="">Choose business</option>' +
+    list.map(b => `<option value="${esc(b.id)}">${esc(b.name||b.id)}</option>`).join('');
+  // Restore stored selection if still valid
+  let stored = '';
+  try { stored = localStorage.getItem(BUSINESS_KEY) || ''; } catch(e) {}
+  const target = (stored && list.some(b => b.id === stored)) ? stored
+              : (list.length === 1 ? list[0].id : chosen);
+  sel.value = (target && list.some(b => b.id === target)) ? target : '';
+  applyBusinessSelection(false);
+  renderBusinessesManage(list);
+  return list;
+}
+
+function applyBusinessSelection(refreshAfter) {
+  const sel = document.getElementById('businessSelect');
+  const newId = sel ? sel.value : '';
+  if (newId === uiState.businessId) return;
+  // Cancel in-flight tenant requests, clear tenant panels, bump generation.
+  if (_tenantAbort) { try { _tenantAbort.abort(); } catch(e){} }
+  _tenantAbort = null;
+  uiState.generation++;
+  uiState.businessId = newId || null;
+  if (newId) { try { localStorage.setItem(BUSINESS_KEY, newId); } catch(e){} }
+  else { try { localStorage.removeItem(BUSINESS_KEY); } catch(e){} }
+  updateBusinessBadge();
+  setTenantControlsDisabled(!uiState.businessId);
+  clearTenantPanels();
+  window.dispatchEvent(new CustomEvent('business:changed', {detail:{businessId: uiState.businessId}}));
+  if (refreshAfter) refresh();
+}
+
+function updateBusinessBadge() {
+  const badge = document.getElementById('businessBadge');
+  if (!badge) return;
+  badge.textContent = uiState.businessId ? ('Biz: ' + uiState.businessId) : 'No business';
+  badge.style.color = uiState.businessId ? 'var(--accent)' : 'var(--text3)';
+}
+
+function setTenantControlsDisabled(disabled) {
+  document.querySelectorAll('[data-tenant-control]').forEach(el => {
+    if (disabled) { el.setAttribute('disabled',''); el.classList.add('disabled'); }
+    else { el.removeAttribute('disabled'); el.classList.remove('disabled'); }
+  });
+}
+
+function clearTenantPanels() {
+  ['statsRow','actionFeed','oppsList','projectsManage','accountsManage',
+   'cookiesStatus','commList','networkGraph','radarChart','intelPanel',
+   'scheduleListFull','decisionsList'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+}
+
+function onBusinessSelectChange() { applyBusinessSelection(true); }
+
+async function submitBusiness() {
+  const business_id = (document.getElementById('bId').value||'').trim();
+  const name = (document.getElementById('bName').value||'').trim();
+  const description = (document.getElementById('bDesc').value||'').trim();
+  if (!business_id || !name) { toast('ID and Name required','error'); return; }
+  try {
+    const d = await apiPost('/api/businesses', {business_id, name, description, enabled: true});
+    toast(d.detail || d.message || 'Created', d.ok ? 'success' : 'error');
+    if (d.ok) { closeModal(); await loadBusinesses(); }
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function archiveBusiness(businessId) {
+  if (!businessId) return;
+  if (!confirm(`Archive business "${businessId}"? It will be disabled; products/accounts keep their data.`)) return;
+  try {
+    const d = await apiPost(`/api/businesses/${encodeURIComponent(businessId)}/archive`, {});
+    toast(d.detail || d.message || 'Done', d.ok ? 'success' : 'error');
+    await loadBusinesses();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderBusinessesManage(list) {
+  const el = document.getElementById('businessesManage');
+  if (!el) return;
+  if (!list || !list.length) {
+    el.innerHTML = emptyState('&#127970;', 'No businesses yet',
+      'Create your first business, then add a product and personal/service accounts inside it.');
+    return;
+  }
+  el.innerHTML = '';
+  list.forEach(b => {
+    const card = document.createElement('div');
+    card.className = 'entity-card';
+    const active = b.enabled !== false;
+    card.innerHTML = `<div style="flex:1">
+      <div class="name">${esc(b.name||b.id)} <span class="badge ${active?'on':'off'}">${active?'Active':'Archived'}</span></div>
+      <div class="meta">${esc(b.id)}${b.description?(' · '+esc(b.description)):''}</div>
+    </div><div class="actions-area"></div>`;
+    const actions = card.querySelector('.actions-area');
+    if (b.id !== uiState.businessId) {
+      actions.appendChild(actionButton('Switch', 'btn btn-sm', () => {
+        const sel = document.getElementById('businessSelect');
+        if (sel) { sel.value = b.id; onBusinessSelectChange(); }
+      }));
+    } else {
+      const cur = document.createElement('span');
+      cur.className = 'badge healthy'; cur.textContent = 'selected';
+      actions.appendChild(cur);
+    }
+    if (active) {
+      actions.appendChild(actionButton('Archive', 'btn btn-sm danger', () => archiveBusiness(b.id)));
+    }
+    el.appendChild(card);
+  });
+}
+
+
 function esc(s) { if(!s) return ''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
 // Build an action button via the DOM API so server-derived identifiers are
 // never concatenated into an executable HTML/JS attribute. `handler` closes
@@ -1046,7 +1231,11 @@ function renderServer(d) {
 function renderManageProjects(d) {
   const el = document.getElementById('projectsManage');
   if (!el) return;
-  if (!d||!d.length) { el.innerHTML='<p class="no-data">No projects</p>'; return; }
+  if (!d||!d.length) {
+    el.innerHTML = emptyState('&#128230;', 'No products yet',
+      'A product is the project configuration for one business. Add a product, then assign accounts to it.');
+    return;
+  }
   el.innerHTML = '';
   d.forEach(p => {
     const card = document.createElement('div');
@@ -1059,42 +1248,67 @@ function renderManageProjects(d) {
   });
 }
 
+// Plan 010 Step 4: group accounts by service within the selected business and
+// render every record distinctly (no collapse by platform/username). Multiple
+// distinct accounts for the same service are normal.
 function renderManageAccounts(d) {
   const el = document.getElementById('accountsManage');
   if (!el) return;
-  if (!d||!d.length) { el.innerHTML='<p class="no-data">No accounts</p>'; return; }
-  const filtered = d.filter(a => a.platform !== 'twitter');
+  if (!d||!d.length) {
+    el.innerHTML = emptyState('&#129309;', 'No accounts yet',
+      'Add a Reddit or Telegram (personal) account and assign it to products in this business.');
+    return;
+  }
   const tierColor = {veteran:'var(--gold,#f5c518)',established:'var(--green)',growing:'var(--blue)',new:'var(--text3)'};
   const tierIcon  = {veteran:'★',established:'◆',growing:'▲',new:'○'};
+  // Group by platform, preserving server order inside each group.
+  const groups = {};
+  const order = [];
+  d.forEach(a => {
+    const plat = a.platform || 'unknown';
+    if (!groups[plat]) { groups[plat] = []; order.push(plat); }
+    groups[plat].push(a);
+  });
   el.innerHTML = '';
-  filtered.forEach(a => {
-    const tn = a.tier_name||'new';
-    const karma = a.karma!=null ? `karma ${a.karma}` : 'karma ?';
-    const cap = a.daily_cap||3;
-    const canPost = a.can_post ? '' : ' · comments only';
-    const tierBadge = `<span style="color:${tierColor[tn]||'var(--text3)'};font-size:11px;font-weight:700;letter-spacing:.5px">${tierIcon[tn]||'○'} ${tn.toUpperCase()}</span>`;
-    const writeCount = (a.types||{}).comment||0 + (a.types||{}).post||0;
-    const card = document.createElement('div');
-    card.className = 'entity-card';
-    card.innerHTML = `<div style="flex:1">
-        <div class="name" style="display:flex;align-items:center;gap:8px">
+  order.forEach(plat => {
+    const head = document.createElement('div');
+    head.className = 'acct-group-head';
+    head.innerHTML = `<span class="acct-group-icon">${plat==='telegram'?'&#9993;':plat==='reddit'?'&#9881;':'&#9881;'}</span> ${esc(plat.toUpperCase())} <span class="acct-group-count">${groups[plat].length}</span>`;
+    el.appendChild(head);
+    groups[plat].forEach(a => {
+      const tn = a.tier_name||'new';
+      const karma = a.karma!=null ? `karma ${a.karma}` : '';
+      const cap = a.daily_cap||3;
+      const canPost = a.can_post ? '' : ' · comments only';
+      const tierBadge = `<span style="color:${tierColor[tn]||'var(--text3)'};font-size:11px;font-weight:700;letter-spacing:.5px">${tierIcon[tn]||'○'} ${tn.toUpperCase()}</span>`;
+      const prods = (a.assigned_projects||[]).join(', ');
+      const authStatus = a.auth_status ? `<span class="badge ${a.auth_status==='authorized'?'healthy':a.auth_status==='not_authorized'?'off':'warning'}">${esc(a.auth_status)}</span>` : '';
+      const idLine = a.account_id ? `<span style="color:var(--text3);font-family:var(--font-data);font-size:10px">${esc(a.account_id)}</span>` : '';
+      const card = document.createElement('div');
+      card.className = 'entity-card acct-card';
+      card.innerHTML = `<div style="flex:1">
+        <div class="name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           @${esc(a.username)}
-          <span style="font-family:var(--font-data);font-size:10px;color:var(--text3);text-transform:uppercase">${esc(a.platform)}</span>
           ${tierBadge}
+          ${authStatus}
+          ${a.enabled===false ? '<span class="badge off">disabled</span>' : ''}
         </div>
-        <div class="meta">${karma} · cap ${cap}/day${canPost} · ${a.total_24h||0} actions today (C:${a.comments||0} P:${a.posts||0})</div>
-        <div class="meta" style="color:${a.has_cookies?'var(--green)':'var(--red)'}">
-          ${a.has_cookies ? '● cookies active' : '● no cookies — login needed'}
-          ${a.enabled===false ? ' · <span style="color:var(--red)">disabled</span>' : ''}
+        <div class="meta">${karma ? karma+' · ' : ''}cap ${cap}/day${canPost} · ${a.total_24h||0} actions today (C:${a.comments||0} P:${a.posts||0})</div>
+        <div class="meta">${prods ? ('Products: '+esc(prods)) : (a.persona ? ('persona: '+esc(a.persona)) : 'no products assigned')}</div>
+        <div class="meta" style="color:${a.has_cookies||a.auth_status==='authorized'?'var(--green)':'var(--red)'}">
+          ${plat==='telegram' ? (a.auth_status==='authorized'?'&#9679; authorized session':'&#9679; not authorized — use Authorize') : (a.has_cookies ? '&#9679; cookies active' : '&#9679; no cookies — login needed')}
         </div>
+        <div class="meta">${idLine}</div>
       </div>
       <div class="actions-area">
-        ${hpBar(a.status)}
-        <span class="badge ${a.status==='healthy'?'healthy':a.status==='cooldown'?'cooldown':'error'}">${esc(a.status)}</span>
+        ${plat==='reddit' ? hpBar(a.status) : ''}
       </div>`;
-    const actions = card.querySelector('.actions-area');
-    actions.appendChild(actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.username)));
-    el.appendChild(card);
+      const actions = card.querySelector('.actions-area');
+      // Stable account id is the canonical handle; pass it as the (platform, id)
+      // pair. Backend resolves account_id first, then username.
+      actions.appendChild(actionButton('Remove', 'btn btn-sm danger', () => removeAccount(a.platform, a.account_id || a.username)));
+      el.appendChild(card);
+    });
   });
 }
 
@@ -1213,9 +1427,15 @@ function filterNetwork(type) {
 // ══════════════════════════════════════════════════════════════
 // CONTROLS
 // ══════════════════════════════════════════════════════════════
+// Tenant-scoped manual actions run against the selected business; global
+// controls (pause/resume/emergency) stay unscoped. Plan 010 Step 3.
+const _GLOBAL_CONTROLS = new Set(['pause','resume','emergency-stop','emergency-reset']);
 async function doControl(action) {
   try {
-    const d = await apiPost('/api/control/'+action);
+    const isTenant = !_GLOBAL_CONTROLS.has(action);
+    if (isTenant && !requireBusiness()) return;
+    const d = isTenant ? await apiTenantPost('/api/control/'+action, {})
+                       : await apiPost('/api/control/'+action);
     if (d&&!d.ok) { toast(d.error||'Failed','error'); return; }
     if (action==='pause') paused=true;
     if (action==='resume') paused=false;
@@ -1223,7 +1443,8 @@ async function doControl(action) {
     const br = document.getElementById('btnResume');
     if(bp) bp.disabled=paused;
     if(br) br.disabled=!paused;
-    toast(action.charAt(0).toUpperCase()+action.slice(1)+' executed','success');
+    const label = action.charAt(0).toUpperCase()+action.slice(1);
+    toast(isTenant && uiState.businessId ? `${label} (biz: ${uiState.businessId}) executed` : label+' executed','success');
   } catch(e) { toast('Error: '+e.message,'error'); }
 }
 async function emergencyStop() {
@@ -1238,27 +1459,29 @@ async function emergencyReset() {
 // CRUD: PROJECTS
 // ══════════════════════════════════════════════════════════════
 async function submitProject() {
+  if (!requireBusiness()) return;
   const name = document.getElementById('pName').value.trim();
   const url = document.getElementById('pUrl').value.trim();
   const desc = document.getElementById('pDesc').value.trim();
   if (!name||!url||!desc) { toast('Name, URL and Description required','error'); return; }
   try {
-    const d = await apiPost('/api/projects', {
+    const d = await apiTenantPost('/api/projects', {
       name, url, description:desc, project_type:document.getElementById('pType').value,
       weight:parseFloat(document.getElementById('pWeight').value)||1.0,
       tagline:document.getElementById('pTagline').value.trim(),
       selling_points:splitCSV(document.getElementById('pSelling').value),
       target_audiences:splitCSV(document.getElementById('pAudiences').value),
     });
-    if (d.ok) { toast('Project created','success'); closeModal(); refresh(); }
+    if (d.ok) { toast('Product created','success'); closeModal(); refresh(); }
     else toast(d.detail||'Failed','error');
   } catch(e) { toast(e.message,'error'); }
 }
 
 async function editProject(name) {
+  if (!requireBusiness()) return;
   _editingProject = name;
   try {
-    const d = await api('/api/projects/'+encodeURIComponent(name));
+    const d = await apiTenant('/api/projects/'+encodeURIComponent(name));
     const proj = d.project||{};
     document.getElementById('editProjName').textContent = name;
     document.getElementById('epEnabled').value = proj.enabled!==false?'true':'false';
@@ -1273,7 +1496,7 @@ async function editProject(name) {
     document.getElementById('epSubsSecondary').value = (subs.secondary||[]).join(', ');
     document.getElementById('epRedditKw').value = (reddit.keywords||[]).join(', ');
     openModal('editProject');
-  } catch(e) { toast('Error loading project','error'); }
+  } catch(e) { toast('Error loading product','error'); }
 }
 
 async function submitEditProject() {
@@ -1289,41 +1512,129 @@ async function submitEditProject() {
     reddit_keywords:splitCSV(document.getElementById('epRedditKw').value),
   };
   try {
-    const d = await apiPut('/api/projects/'+encodeURIComponent(_editingProject), body);
-    if (d.ok) { toast('Project updated','success'); closeModal(); refresh(); }
+    const d = await apiTenantPut('/api/projects/'+encodeURIComponent(_editingProject), body);
+    if (d.ok) { toast('Product updated','success'); closeModal(); refresh(); }
     else toast(d.detail||'Failed','error');
   } catch(e) { toast(e.message,'error'); }
 }
 
 async function deleteProject(name) {
-  if (!confirm(`Delete project "${name}"?`)) return;
-  try { const d=await apiDelete('/api/projects/'+encodeURIComponent(name)); if(d.ok){toast('Deleted','success');refresh()}else toast(d.detail||'Failed','error'); } catch(e){toast(e.message,'error')}
+  if (!requireBusiness()) return;
+  if (!confirm(`Delete product "${name}"?`)) return;
+  try { const d=await apiTenantDelete('/api/projects/'+encodeURIComponent(name)); if(d.ok){toast('Deleted','success');refresh()}else toast(d.detail||'Failed','error'); } catch(e){toast(e.message,'error')}
 }
 
 // ══════════════════════════════════════════════════════════════
-// CRUD: ACCOUNTS
+// CRUD: ACCOUNTS (platform-aware, plan 010)
 // ══════════════════════════════════════════════════════════════
-async function submitAccount() {
-  const platform=document.getElementById('aPlat').value,
-        username=document.getElementById('aUser').value.trim(),
-        password=document.getElementById('aPass').value.trim();
-  if (!username||!password) { toast('Username and Password required','error'); return; }
-  const projectsRaw = (document.getElementById('aProjects')||{}).value||'';
-  const projects = projectsRaw ? projectsRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+function requireBusiness() {
+  if (!hasBusinessScope()) { toast('Select a business first','error'); return false; }
+  return true;
+}
+
+// Clear secret-bearing fields whenever platform changes so a previous platform's
+// credentials can never leak into the wrong payload (plan 010 Step 5).
+function clearAccountSecretFields() {
+  ['aPass','aApiHash','aEmail','aUser','aApiId','aPhone','aDisplayName'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+}
+
+function onAccountPlatformChange() {
+  clearAccountSecretFields();
+  const plat = document.getElementById('aPlat').value;
+  const r = document.getElementById('acctFieldsReddit');
+  const t = document.getElementById('acctFieldsTelegram');
+  if (r) r.style.display = plat === 'reddit' ? '' : 'none';
+  if (t) t.style.display = plat === 'telegram' ? '' : 'none';
+}
+
+// Populate the product multi-select from the current business only.
+async function loadAccountProductChecklist() {
+  const wrap = document.getElementById('aProjectsList');
+  if (!wrap) return;
+  wrap.innerHTML = '<span class="acct-hint">Loading products...</span>';
   try {
-    const d = await apiPost('/api/accounts', {
-      platform, username, password,
-      email: document.getElementById('aEmail').value.trim(),
-      persona: document.getElementById('aPersona').value,
-      projects,
+    const prods = await apiTenant('/api/projects');
+    if (!prods || !prods.length) {
+      wrap.innerHTML = '<span class="acct-hint">No products in this business yet. Add one first.</span>';
+      return;
+    }
+    wrap.innerHTML = '';
+    prods.forEach(p => {
+      const id = 'aProd_' + (p.name||'').replace(/[^a-z0-9_-]/gi,'');
+      const lbl = document.createElement('label');
+      lbl.className = 'checklist-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = p.name; cb.id = id;
+      lbl.appendChild(cb);
+      const span = document.createElement('span');
+      span.textContent = ' ' + (p.name||'');
+      lbl.appendChild(span);
+      wrap.appendChild(lbl);
     });
-    toast(d.message||'Done', d.ok?'success':'error');
-    if (d.ok) { closeModal(); refresh(); }
+  } catch(e) {
+    wrap.innerHTML = '<span class="acct-hint" style="color:var(--red)">Could not load products</span>';
+  }
+}
+
+// Hook modal open to (re)load the dynamic product list and set platform defaults.
+function openAccountModal() {
+  onAccountPlatformChange();
+  loadAccountProductChecklist();
+}
+
+function selectedAccountProducts() {
+  const wrap = document.getElementById('aProjectsList');
+  if (!wrap) return [];
+  return Array.from(wrap.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+}
+
+async function submitAccount() {
+  if (!requireBusiness()) return;
+  const platform = document.getElementById('aPlat').value;
+  const persona = document.getElementById('aPersona').value;
+  const projects = selectedAccountProducts();
+  // Stable client-side account id so the backend can address this record
+  // without username ambiguity (matches plan 009 stable-ID contract).
+  const account_id = (platform + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8));
+  let body;
+  if (platform === 'telegram') {
+    const api_id = (document.getElementById('aApiId').value||'').trim();
+    const api_hash = (document.getElementById('aApiHash').value||'').trim();
+    if (!api_id || !api_hash) { toast('Telegram API ID and API Hash required','error'); return; }
+    body = {
+      platform, account_id, business_id: uiState.businessId,
+      account_type: 'user', api_id, api_hash,
+      phone: (document.getElementById('aPhone').value||'').trim() || null,
+      persona, projects,
+    };
+  } else {
+    const username = (document.getElementById('aUser').value||'').trim();
+    const password = (document.getElementById('aPass').value||'').trim();
+    if (!username||!password) { toast('Username and Password required','error'); return; }
+    body = {
+      platform, account_id, business_id: uiState.businessId,
+      username, password,
+      email: (document.getElementById('aEmail').value||'').trim(),
+      persona, projects,
+    };
+  }
+  try {
+    const d = await apiTenantPost('/api/accounts', body);
+    const ok = d.ok !== false;
+    toast(d.detail || d.message || (platform==='telegram' ? 'Telegram account created (not authorized)' : 'Done'), ok?'success':'error');
+    if (ok) { clearAccountSecretFields(); closeModal(); refresh(); }
   } catch(e) { toast(e.message,'error'); }
 }
+// Backwards-compatible signature: the second argument is the stable account_id
+// when available, falling back to username for legacy records. Plan 009's
+// remove_account resolves by account_id first, then username.
 async function removeAccount(platform, username) {
-  if (!confirm(`Remove @${username} (${platform})?`)) return;
-  try { const d=await apiDelete(`/api/accounts/${platform}/${encodeURIComponent(username)}`); toast(d.message||'Done',d.ok?'success':'error'); refresh(); } catch(e){toast(e.message,'error')}
+  if (!requireBusiness()) return;
+  const label = username;
+  if (!confirm(`Remove ${label} (${platform})?`)) return;
+  try { const d=await apiTenantDelete(`/api/accounts/${platform}/${encodeURIComponent(username)}`); toast(d.message||'Done',d.ok?'success':'error'); refresh(); } catch(e){toast(e.message,'error')}
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1357,7 +1668,7 @@ async function loadCookieAccounts() {
   const cached = _cookieAccounts[plat];
   if (cached) { cached.forEach(a => { const o=document.createElement('option'); o.value=a; o.textContent='@'+a; sel.appendChild(o); }); return; }
   try {
-    const d = await api('/api/cookies');
+    const d = await apiTenant('/api/cookies');
     const accs = d.filter(c=>c.platform===plat).map(c=>c.username);
     _cookieAccounts[plat] = accs;
     accs.forEach(a => { const o=document.createElement('option'); o.value=a; o.textContent='@'+a; sel.appendChild(o); });
@@ -1365,10 +1676,11 @@ async function loadCookieAccounts() {
 }
 
 async function submitPasteCookies() {
+  if (!requireBusiness()) return;
   const platform=document.getElementById('cookiePlat').value, username=document.getElementById('cookieAccount').value, raw=document.getElementById('cookieRaw').value.trim();
   if (!username||!raw) { toast('Select account and paste cookies','error'); return; }
   try {
-    const d = await apiPost('/api/cookies/paste', {platform,username,cookies:raw});
+    const d = await apiTenantPost('/api/cookies/paste', {platform,username,cookies:raw});
     if (d.ok) {
       let msg = d.message;
       if (d.key_cookies_found&&d.key_cookies_found.length) msg += ` | Keys: ${d.key_cookies_found.join(', ')}`;
@@ -1378,14 +1690,20 @@ async function submitPasteCookies() {
 }
 
 async function deleteCookies(platform, username) {
+  if (!requireBusiness()) return;
   if (!confirm(`Delete cookies for @${username}?`)) return;
-  try { const d=await apiDelete(`/api/cookies/${platform}/${encodeURIComponent(username)}`); toast(d.message||'Done',d.ok?'success':'error'); _cookieAccounts={}; refresh(); } catch(e){toast(e.message,'error')}
+  try { const d=await apiTenantDelete(`/api/cookies/${platform}/${encodeURIComponent(username)}`); toast(d.message||'Done',d.ok?'success':'error'); _cookieAccounts={}; refresh(); } catch(e){toast(e.message,'error')}
 }
 
 // ══════════════════════════════════════════════════════════════
 // MODALS
 // ══════════════════════════════════════════════════════════════
-function openModal(id) { const m=document.getElementById('modal-'+id); if(m)m.classList.add('show'); if(id==='pasteCookies')loadCookieAccounts(); }
+function openModal(id) {
+  const m=document.getElementById('modal-'+id);
+  if(m)m.classList.add('show');
+  if(id==='pasteCookies')loadCookieAccounts();
+  if(id==='addAccount')openAccountModal();
+}
 function closeModal() { document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.remove('show')); }
 
 // ══════════════════════════════════════════════════════════════
@@ -1894,10 +2212,10 @@ async function refresh() {
 
     if (currentTab === 'command') {
       const [stats, minimaps, schedule, history, acctPerf, heatmap, funnel] = await Promise.allSettled([
-        api('/api/stats'), api('/api/minimaps'), api('/api/schedule'), api('/api/history?hours=168'),
-        api('/api/accounts/reddit/performance'),
-        api('/api/heatmap').catch(()=>null),
-        api('/api/funnel').catch(()=>null)
+        apiTenant('/api/stats'), apiTenant('/api/minimaps'), api('/api/schedule'), apiTenant('/api/history?hours=168'),
+        apiTenant('/api/accounts/reddit/performance'),
+        apiTenant('/api/heatmap').catch(()=>null),
+        apiTenant('/api/funnel').catch(()=>null)
       ]);
       if (stats.status==='fulfilled') renderStats(stats.value);
       if (minimaps.status==='fulfilled') renderMinimaps(minimaps.value);
@@ -1913,19 +2231,19 @@ async function refresh() {
       if (funnel.status==='fulfilled' && funnel.value) renderFunnel(funnel.value);
     }
     else if (currentTab === 'liveops') {
-      const [actions, convos] = await Promise.allSettled([api('/api/actions?limit=50'), api('/api/conversations')]);
+      const [actions, convos] = await Promise.allSettled([apiTenant('/api/actions?limit=50'), apiTenant('/api/conversations')]);
       if (actions.status==='fulfilled') renderActions(actions.value);
       if (convos.status==='fulfilled') renderConversations(convos.value);
     }
     else if (currentTab === 'intel') {
       const [brain, perf, insights, opps, decisions, trends, knowledge, discoveries, failures, sentiment] = await Promise.allSettled([
-        api('/api/brain'), api('/api/performance'), api('/api/insights'), api('/api/opportunities?limit=25'),
-        api('/api/decisions?hours=4&limit=40').catch(()=>[]),
-        api('/api/intel/trends').catch(()=>({trends:[]})),
-        api('/api/intel/knowledge').catch(()=>({entries:[]})),
-        api('/api/intel/discoveries').catch(()=>({discoveries:[]})),
-        api('/api/intel/failures').catch(()=>({failures:[]})),
-        api('/api/intel/sentiment').catch(()=>({by_subreddit:[],by_tone:[]}))
+        apiTenant('/api/brain'), apiTenant('/api/performance'), apiTenant('/api/insights'), apiTenant('/api/opportunities?limit=25'),
+        apiTenant('/api/decisions?hours=4&limit=40').catch(()=>[]),
+        apiTenant('/api/intel/trends').catch(()=>({trends:[]})),
+        apiTenant('/api/intel/knowledge').catch(()=>({entries:[]})),
+        apiTenant('/api/intel/discoveries').catch(()=>({discoveries:[]})),
+        apiTenant('/api/intel/failures').catch(()=>({failures:[]})),
+        apiTenant('/api/intel/sentiment').catch(()=>({by_subreddit:[],by_tone:[]}))
       ]);
       if (brain.status==='fulfilled') renderBrain(brain.value);
       if (perf.status==='fulfilled') renderPerformance(perf.value);
@@ -1938,14 +2256,14 @@ async function refresh() {
       if (failures.status==='fulfilled') renderFailurePatterns(failures.value);
       if (sentiment.status==='fulfilled') renderSentimentMap(sentiment.value);
       // Radar + Network (merged into intel tab)
-      const radarData = await api('/api/intel/radar').catch(()=>null);
+      const radarData = await apiTenant('/api/intel/radar').catch(()=>null);
       if (radarData) renderRadar(radarData);
-      const networkData = await api('/api/network').catch(()=>null);
+      const networkData = await apiTenant('/api/network').catch(()=>null);
       if (networkData) renderNetwork(networkData);
     }
     else if (currentTab === 'communities') {
       const [comms, targets, requests] = await Promise.allSettled([
-        api('/api/communities'), api('/api/takeover/targets'), api('/api/takeover/requests')
+        apiTenant('/api/communities'), apiTenant('/api/takeover/targets'), apiTenant('/api/takeover/requests')
       ]);
       if (comms.status==='fulfilled') renderCommunities(comms.value.communities || comms.value);
       if (targets.status==='fulfilled') renderTakeoverTargets(targets.value.targets || targets.value);
@@ -1953,7 +2271,7 @@ async function refresh() {
     }
     else if (currentTab === 'config') {
       const [projects, accounts, cookies, server, schedule] = await Promise.allSettled([
-        api('/api/projects'), api('/api/accounts'), api('/api/cookies'),
+        apiTenant('/api/projects'), apiTenant('/api/accounts'), apiTenant('/api/cookies'),
         api('/api/server'), api('/api/schedule')
       ]);
       if (projects.status==='fulfilled') renderManageProjects(projects.value);
@@ -1986,6 +2304,7 @@ async function refresh() {
 // START + BOOT
 // ══════════════════════════════════════════════════════════════
 function startDashboard() {
+  loadBusinesses();   // plan 010: restore business selection before first refresh
   refresh();
   refreshTimer = setInterval(refresh, 5000);
   connectWS();
