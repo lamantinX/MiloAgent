@@ -605,8 +605,7 @@ class Database:
         )
 
     def get_sentiment_by_tone(
-        self, project: str, days: int = 30,
-    ) -> List[Dict]:
+        self, project: str, days: int = 30, **kwargs):
         """Get average sentiment grouped by tone_style."""
         since = self._cutoff(days=days)
         rows = self.conn.execute(
@@ -913,8 +912,7 @@ class Database:
             )
 
     def get_rejected_opportunities(
-        self, hours: int = 24, limit: int = 50,
-    ) -> List[Dict]:
+        self, hours: int = 24, limit: int = 50, **kwargs):
         """Get recently rejected/skipped opportunities with reasons."""
         since = self._cutoff(hours=hours)
         rows = self.conn.execute(
@@ -981,8 +979,7 @@ class Database:
         return (row[0] if row else 0) > 0
 
     def get_recent_decisions(
-        self, hours: int = 2, decision_type: str = "", limit: int = 30,
-    ) -> List[Dict]:
+        self, hours: int = 2, decision_type: str = "", limit: int = 30, **kwargs):
         """Get recent decisions for debugging."""
         since = self._cutoff(hours=hours)
         query = "SELECT * FROM decision_log WHERE timestamp > ?"
@@ -1073,16 +1070,19 @@ class Database:
             (action_id, metric_type, value, json.dumps(metadata) if metadata else None),
         )
 
-    def get_stats_summary(self, hours: int = 24) -> Dict[str, Any]:
+    def get_stats_summary(self, hours: int = 24, business_id: Optional[str] = None) -> Dict[str, Any]:
         """Get aggregated stats for the last N hours."""
         since = self._cutoff(hours=hours)
         stats = {}
+        
+        where = "AND business_id = ?" if business_id else ""
+        params = (since, business_id) if business_id else (since,)
 
         rows = self.conn.execute(
-            """SELECT platform, action_type, COUNT(*) as count
-               FROM actions WHERE timestamp > ? AND success = 1
+            f"""SELECT platform, action_type, COUNT(*) as count
+               FROM actions WHERE timestamp > ? AND success = 1 {where}
                GROUP BY platform, action_type""",
-            (since,),
+            params,
         ).fetchall()
         actions_by_platform = {}
         for row in rows:
@@ -1093,16 +1093,16 @@ class Database:
         stats["actions"] = actions_by_platform
 
         rows = self.conn.execute(
-            """SELECT status, COUNT(*) as count
-               FROM opportunities WHERE timestamp > ?
+            f"""SELECT status, COUNT(*) as count
+               FROM opportunities WHERE timestamp > ? {where}
                GROUP BY status""",
-            (since,),
+            params,
         ).fetchall()
         stats["opportunities"] = {row["status"]: row["count"] for row in rows}
 
         row = self.conn.execute(
-            "SELECT AVG(score) as avg_score FROM opportunities WHERE timestamp > ?",
-            (since,),
+            f"SELECT AVG(score) as avg_score FROM opportunities WHERE timestamp > ? {where}",
+            params,
         ).fetchone()
         stats["avg_opportunity_score"] = round(row["avg_score"] or 0, 1)
         return stats
@@ -1223,8 +1223,7 @@ class Database:
         return [dict(row) for row in rows]
 
     def get_post_type_stats(
-        self, project: str, days: int = 30,
-    ) -> List[Dict]:
+        self, project: str, days: int = 30, **kwargs):
         """Get aggregated performance stats grouped by post_type."""
         since = self._cutoff(days=days)
         rows = self.conn.execute(
@@ -1416,8 +1415,7 @@ class Database:
 
     def get_community_presence(
         self, project: str = "", account: str = "",
-        stage: str = "", limit: int = 50,
-    ) -> List[Dict]:
+        stage: str = "", limit: int = 50, **kwargs):
         """Get community presence records with optional filters."""
         query = "SELECT * FROM community_presence WHERE 1=1"
         params: list = []
@@ -1582,7 +1580,7 @@ class Database:
              1 if was_removed else 0),
         )
 
-    def get_experiment_results(self, experiment_id: int) -> Dict:
+    def get_experiment_results(self, experiment_id: int, **kwargs):
         """Get aggregated results per variant for an experiment."""
         rows = self.conn.execute(
             """SELECT variant, COUNT(*) as count,
@@ -1880,7 +1878,7 @@ class Database:
         ).fetchone()
         return row["cnt"] if row else 0
 
-    def get_relationship_stats(self, project: str) -> Dict[str, int]:
+    def get_relationship_stats(self, project: str, **kwargs):
         """Get counts of relationships by stage."""
         rows = self.conn.execute(
             "SELECT stage, COUNT(*) as cnt FROM relationships WHERE project = ? AND is_blocked = 0 GROUP BY stage",
@@ -2002,7 +2000,7 @@ class Database:
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         logger.debug("WAL checkpoint completed")
 
-    def force_maintenance(self):
+    def force_maintenance(self, **kwargs):
         """Manually trigger cleanup + checkpoint."""
         self._cleanup_old_data()
         self._wal_checkpoint()

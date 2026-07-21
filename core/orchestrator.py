@@ -72,9 +72,9 @@ def load_yaml(path: str) -> dict:
     if path.endswith(".yaml"):
         local_path = path[:-5] + ".local.yaml"
         if os.path.exists(local_path):
-            with open(local_path) as f:
+            with open(local_path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -737,9 +737,9 @@ class Orchestrator:
                     return
                 scan_project = self._expand_project_targets(project)
                 scan_project = self._limit_scan_targets(scan_project)
-                account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+                account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
                 if not account:
-                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                    self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                     logger.debug(f"Scan {proj_name}: no account available")
                     return
                 bot = self._get_reddit_bot(account)
@@ -905,9 +905,9 @@ class Orchestrator:
             if not pending:
                 continue
 
-            account = self.account_mgr.get_next_account(platform, business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account(platform, business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform=platform, project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform=platform, project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             # SAFETY: Filter opportunities to only assigned subreddits for this account
@@ -1399,7 +1399,7 @@ class Orchestrator:
 
             # Reddit engagement -- warm_up only for accounts with karma>=5
             # (low-karma accounts get CAPTCHA'd on warm_up actions)
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if account and self._check_resources():
                 try:
                     karma = self.account_mgr.get_cached_karma(account["username"])
@@ -1444,9 +1444,9 @@ class Orchestrator:
                 break
 
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
@@ -1939,9 +1939,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             # Tier 0 accounts (karma<10) can't post -- skip to avoid CAPTCHAs
@@ -2158,9 +2158,9 @@ class Orchestrator:
                 break
 
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("twitter", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("twitter", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform="twitter", project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform="twitter", project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             allowed, reason = self.rate_limiter.can_act(
@@ -2535,9 +2535,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             # Find subreddits needing activity
@@ -2841,7 +2841,7 @@ class Orchestrator:
             reddit_bot = None
             twitter_bot = None
 
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if account:
                 reddit_bot = self._get_reddit_bot(account)
 
@@ -2939,11 +2939,11 @@ class Orchestrator:
                             f"Hub r/{hub['subreddit']}: assigned account @{assigned_username} "
                             f"unavailable — using round-robin"
                         )
-                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
                 else:
-                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
                 if not account:
-                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                    self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                     continue
 
                 try:
@@ -3005,11 +3005,11 @@ class Orchestrator:
                             f"Assigned account {assigned_username} unavailable for r/{hub['subreddit']} "
                             f"— falling back to round-robin"
                         )
-                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+                        account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
                 else:
-                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+                    account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
                 if not account:
-                    self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                    self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                     continue
                 bot = self._get_reddit_bot(account)
 
@@ -3115,9 +3115,9 @@ class Orchestrator:
 
         for project in self.projects:
             proj_name = project.get("project", {}).get("name", "unknown")
-            account = self.account_mgr.get_next_account("reddit", business_id=project.get("business_id", ""), product_id=project.get("id"))
+            account = self.account_mgr.get_next_account("reddit", business_id=project.get("project", {}).get("business_id", ""), product_id=project.get("project", {}).get("id"))
             if not account:
-                self.db.log_decision("skip", platform="reddit", project=project.get("id"), details="No assigned account")
+                self.db.log_decision("skip", platform="reddit", project=project.get("project", {}).get("id"), details="No assigned account")
                 continue
 
             try:

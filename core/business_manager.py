@@ -562,9 +562,22 @@ class BusinessManager:
         return False
 
     def get_project(self, name: str) -> Optional[Dict]:
-        """Get a product by name (case-insensitive)."""
+        """Get a product by id or name (case-insensitive).
+
+        Id is the canonical slug used in config (e.g. account assigned_products
+        and business_id references), so it's checked first; the display name
+        is kept as a fallback for callers that pass a human-readable name.
+        """
+        needle = (name or "").lower()
+        if not needle:
+            return None
+        # 1) canonical id match
         for p in self.projects:
-            if p.get("project", {}).get("name", "").lower() == name.lower():
+            if p.get("project", {}).get("id", "").lower() == needle:
+                return p
+        # 2) display name match (legacy)
+        for p in self.projects:
+            if p.get("project", {}).get("name", "").lower() == needle:
                 return p
         return None
 

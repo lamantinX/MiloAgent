@@ -297,27 +297,30 @@ function withBusinessScope(path) {
 }
 
 // Global helpers: server/CPU/RAM/scheduler/business-list/auth. Never scoped.
+async function _resolveResponse(r) {
+  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
+  const body = await r.json().catch(()=>({}));
+  if (!r.ok) { let d = (body.detail ? (Array.isArray(body.detail) ? JSON.stringify(body.detail) : body.detail) : body.error) || r.status; throw new Error('' + d); }
+  return body;
+}
+
 async function api(path) {
   const r = await fetch(path, {headers:{'Authorization':'Bearer '+TOKEN}});
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiPost(path, body) {
   const opts = {method:'POST', headers:{'Authorization':'Bearer '+TOKEN}};
   if (body) { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
   const r = await fetch(path, opts);
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiPut(path, body) {
   const r = await fetch(path, {method:'PUT', headers:{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiDelete(path) {
   const r = await fetch(path, {method:'DELETE', headers:{'Authorization':'Bearer '+TOKEN}});
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 
 // Tenant helpers: every call appends the selected business_id. A response from
@@ -325,42 +328,40 @@ async function apiDelete(path) {
 // cancellation is wired but cannot be runtime-asserted in the current plain-text
 // test harness (no jsdom); see plans/010-business-switcher-ui.md STOP note.
 function _tenantSignal() {
-  if (_tenantAbort) { try { _tenantAbort.abort(); } catch(e){} }
-  _tenantAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  return _tenantAbort ? _tenantAbort.signal : undefined;
+  if (!_tenantAbort) _tenantAbort = new AbortController();
+  return _tenantAbort.signal;
 }
+
 async function apiTenant(path) {
+  if (!uiState.businessId) throw new Error('no_business');
   const gen = uiState.generation;
   const r = await fetch(withBusinessScope(path), {headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()});
   if (uiState.generation !== gen) { throw new Error('stale_business'); }
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiTenantPost(path, body) {
+  if (!uiState.businessId) throw new Error('no_business');
   const gen = uiState.generation;
   const opts = {method:'POST', headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()};
   if (body) { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
   const r = await fetch(withBusinessScope(path), opts);
   if (uiState.generation !== gen) { throw new Error('stale_business'); }
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiTenantPut(path, body) {
+  if (!uiState.businessId) throw new Error('no_business');
   const gen = uiState.generation;
   const r = await fetch(withBusinessScope(path), {method:'PUT', headers:{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body), signal:_tenantSignal()});
   if (uiState.generation !== gen) { throw new Error('stale_business'); }
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
 async function apiTenantDelete(path) {
+  if (!uiState.businessId) throw new Error('no_business');
   const gen = uiState.generation;
   const r = await fetch(withBusinessScope(path), {method:'DELETE', headers:{'Authorization':'Bearer '+TOKEN}, signal:_tenantSignal()});
   if (uiState.generation !== gen) { throw new Error('stale_business'); }
-  if (r.status===401) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  return _resolveResponse(r);
 }
-
-// ══════════════════════════════════════════════════════════════
 // BUSINESS CONTEXT (plan 010)
 // ══════════════════════════════════════════════════════════════
 // Selection is browser-local only. Persisted under a versioned localStorage key.

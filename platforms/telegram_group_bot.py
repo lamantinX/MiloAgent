@@ -653,8 +653,20 @@ class TelegramGroupBot(BasePlatform):
             from telethon.errors import FloodWaitError
 
             try:
+                try:
+                    entity = await self.client.get_entity(group_id)
+                except ValueError:
+                    try:
+                        # Try as channel/megagroup
+                        from telethon.tl.types import PeerChannel
+                        entity = await self.client.get_entity(PeerChannel(group_id))
+                    except Exception:
+                        # Try as basic chat
+                        from telethon.tl.types import PeerChat
+                        entity = await self.client.get_entity(PeerChat(group_id))
+
                 await self.client.send_message(
-                    group_id,
+                    entity,
                     reply_text,
                     reply_to=message_id,
                 )
@@ -664,8 +676,20 @@ class TelegramGroupBot(BasePlatform):
                 )
                 await asyncio.sleep(e.seconds + random.uniform(10, 30))
                 # Retry once after flood wait
+                try:
+                    entity = await self.client.get_entity(group_id)
+                except ValueError:
+                    try:
+                        # Try as channel/megagroup
+                        from telethon.tl.types import PeerChannel
+                        entity = await self.client.get_entity(PeerChannel(group_id))
+                    except Exception:
+                        # Try as basic chat
+                        from telethon.tl.types import PeerChat
+                        entity = await self.client.get_entity(PeerChat(group_id))
+
                 await self.client.send_message(
-                    group_id,
+                    entity,
                     reply_text,
                     reply_to=message_id,
                 )

@@ -7,6 +7,14 @@ import time
 import logging
 from pathlib import Path
 
+# Force unbuffered stdout/stderr so interactive output (QR codes, prompts,
+# progress) appears immediately instead of being flushed only on exit.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 import click
 import yaml
 
@@ -24,9 +32,9 @@ def load_yaml(path: str) -> dict:
     if path.endswith(".yaml"):
         local_path = path[:-5] + ".local.yaml"
         if os.path.exists(local_path):
-            with open(local_path) as f:
+            with open(local_path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -99,6 +107,7 @@ def setup_logging(level: str = "INFO"):
     logging.getLogger("hpack").setLevel(logging.WARNING)
     logging.getLogger("telethon.client.updates").setLevel(logging.WARNING)
     logging.getLogger("telethon.extensions.messagepacker").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext.Updater").setLevel(logging.CRITICAL)
 
 
 def check_config_placeholders(config: dict, name: str) -> list:
@@ -437,7 +446,7 @@ def _scan_twitter(db, content_gen, projects, account_mgr):
     """Run Twitter scan for given projects."""
     from platforms.twitter_bot import TwitterBot
     for proj in projects:
-        account = account_mgr.get_next_account("twitter", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        account = account_mgr.get_next_account("twitter", business_id=proj.get("project", {}).get("business_id", ""), product_id=proj.get("project", {}).get("id"))
         bot = _get_twitter_bot(db, content_gen, account) if '_get_twitter_bot' in globals() else None
         if not bot:
             if account:
@@ -460,7 +469,7 @@ def _scan_telegram(db, content_gen, projects, account_mgr):
     from platforms.telegram_group_bot import TelegramGroupBot
 
     for proj in projects:
-        account = account_mgr.get_next_account("telegram", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        account = account_mgr.get_next_account("telegram", business_id=proj.get("project", {}).get("business_id", ""), product_id=proj.get("project", {}).get("id"))
         if not account:
             continue
         bot = TelegramGroupBot(db, content_gen, account)
@@ -722,7 +731,7 @@ def account_info(ctx, platform, project):
     if not proj: click.echo("Project not found"); db.close(); return
     
     if platform == "reddit":
-        account = account_mgr.get_next_account("reddit", business_id=proj.get("business_id", ""), product_id=proj.get("id"))
+        account = account_mgr.get_next_account("reddit", business_id=proj.get("project", {}).get("business_id", ""), product_id=proj.get("project", {}).get("id"))
         bot = _get_reddit_bot(db, content_gen, account)
         if not bot:
             db.close()
@@ -1522,8 +1531,29 @@ def login(platform, account, all_accounts):
         click.echo(f"\nRun 'python miloagent.py test {platform}' to verify.")
 
 
+def _open_file(path: str):
+    """Open a file with the OS default viewer (best effort, never raises)."""
+    import sys
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", path])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
 def _login_telegram():
-    """Telethon phone-based auth: SMS code + optional 2FA."""
+    """Telethon auth: QR code (scan from phone) + 2FA, with SMS fallback.
+
+    No phone number is required up front for QR login — you scan the code from
+    the Telegram phone app (Settings → Devices → Link desktop device). SMS
+    fallback asks for the phone interactively if it's missing or a placeholder.
+    """
     import asyncio
 
     cfg = load_yaml("config/telegram_user_accounts.yaml")
@@ -1548,65 +1578,218 @@ def _login_telegram():
             click.echo("  3. Copy api_id and api_hash to config/telegram_user_accounts.yaml")
             return
 
-        if not phone or phone.startswith("+00XXX"):
-            click.echo(click.style("Phone number not set.", fg="red"))
-            click.echo("Edit config/telegram_user_accounts.yaml and set your phone number.")
-            return
-
-        click.echo(f"\n{'='*50}")
-        click.echo(click.style(f"Telegram Login: {phone}", fg="cyan", bold=True))
-        click.echo(f"Session: {session_file}")
-        click.echo(f"{'='*50}")
-
-        os.makedirs(os.path.dirname(session_file), exist_ok=True)
-
         try:
             from telethon import TelegramClient
+            from telethon.errors import SessionPasswordNeededError
         except ImportError:
             click.echo(click.style("Telethon not installed.", fg="red"))
             click.echo("  pip install telethon")
             return
 
-        async def _do_login():
+        os.makedirs(os.path.dirname(session_file) or ".", exist_ok=True)
+
+        click.echo(f"\n{'='*50}")
+        click.echo(click.style("Telegram Login", fg="cyan", bold=True))
+        click.echo(f"Session: {session_file}")
+        click.echo(f"{'='*50}")
+
+        # ── Method selection ──
+        click.echo("\nLogin method:")
+        click.echo("  1) QR code   — scan from Telegram phone app (recommended, no phone needed)")
+        click.echo("  2) SMS code  — phone number + code from SMS")
+        method = click.prompt("Choose method", default="1", show_default=True).strip()
+
+        async def _resolve_2fa(client):
+            """Prompt for the cloud (2FA) password if Telegram requires it."""
+            me = await client.get_me()
+            name = me.username or me.first_name or "user"
+            click.echo(click.style(
+                f"Login successful! Logged in as @{name}", fg="green"
+            ))
+            click.echo(f"Session saved to: {session_file}")
+            return True
+
+        async def _do_qr_login():
+            """QR login: render ASCII QR + PNG file, recreate on expiry, 2FA aware.
+
+            Every network step is wrapped in a timeout so the flow can never
+            hang silently — if QR provisioning stalls, we fall back to SMS.
+            """
+            client = TelegramClient(session_file, int(api_id), api_hash)
+            click.echo(click.style("Connecting to Telegram…", fg="cyan"))
+            await asyncio.wait_for(client.connect(), timeout=20)
+            click.echo(click.style("Connected. Requesting QR code…", fg="cyan"))
+
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                name = me.username or me.first_name or "user"
+                click.echo(click.style(f"Already logged in as @{name}!", fg="green"))
+                await client.disconnect()
+                return True
+
+            # qr_login() can stall on the network (no internal timeout).
+            # Wrap it; if it hangs we offer SMS fallback instead of freezing.
+            try:
+                qr = await asyncio.wait_for(client.qr_login(), timeout=25)
+            except (asyncio.TimeoutError, Exception) as e:
+                click.echo(click.style(
+                    f"QR provisioning failed ({e}). Falling back to SMS login.",
+                    fg="yellow",
+                ))
+                await client.disconnect()
+                return await _do_sms_login()
+
+            png_path = os.path.splitext(session_file)[0] + "_qr.png"
+            click.echo(click.style(
+                "\nOpen Telegram on your phone → Settings → Devices → Link desktop device, "
+                "and point the camera at the code below.\n", fg="cyan"
+            ))
+
+            # QR tokens expire (~90s). Recreate and re-render on each wait timeout.
+            authorized = False
+            while not authorized:
+                _render_qr_to_terminal(qr.url, png_path)
+                click.echo(click.style(
+                    "(The code refreshes automatically every ~25s if not scanned.)\n",
+                    fg="cyan",
+                ))
+                try:
+                    # qr.wait() resolves on success, raises SessionPasswordNeededError
+                    # for 2FA, or times out (asyncio.TimeoutError) when the token expires.
+                    await asyncio.wait_for(qr.wait(), timeout=25)
+                    authorized = await client.is_user_authorized()
+                except asyncio.TimeoutError:
+                    try:
+                        await asyncio.wait_for(qr.recreate(), timeout=20)
+                    except (asyncio.TimeoutError, Exception) as e:
+                        click.echo(click.style(
+                            f"QR refresh failed ({e}). Retrying…", fg="yellow"
+                        ))
+                    click.echo(click.style("Refreshing QR code…\n", fg="yellow"))
+                    continue
+                except SessionPasswordNeededError:
+                    click.echo(click.style(
+                        "Two-step verification (2FA) is enabled on this account.", fg="yellow"
+                    ))
+                    password = click.prompt("Enter your 2FA cloud password", hide_input=True)
+                    await client.sign_in(password=password)
+                    authorized = True
+
+            if os.path.exists(png_path):
+                try:
+                    os.remove(png_path)
+                except OSError:
+                    pass
+            return await _resolve_2fa(client)
+
+        async def _do_sms_login():
+            """Phone + SMS code auth, with interactive phone entry and 2FA."""
+            nonlocal phone
+            # Treat obvious placeholders as "not set" and ask interactively.
+            is_placeholder = (
+                not phone
+                or phone.startswith("+00XXX")
+                or phone.endswith("000000000")
+            )
+            if is_placeholder:
+                phone = click.prompt(
+                    "Enter your phone number in international format (e.g. +79001234567)"
+                ).strip()
+
             client = TelegramClient(session_file, int(api_id), api_hash)
             await client.connect()
 
             if await client.is_user_authorized():
                 me = await client.get_me()
                 name = me.username or me.first_name or phone
-                click.echo(click.style(
-                    f"Already logged in as @{name}!", fg="green"
-                ))
+                click.echo(click.style(f"Already logged in as @{name}!", fg="green"))
                 await client.disconnect()
                 return True
 
-            click.echo("Sending SMS code to your phone...")
+            click.echo(f"Sending SMS code to {phone}…")
             await client.send_code_request(phone)
 
             code = click.prompt("Enter the code you received")
             try:
                 await client.sign_in(phone, code)
-            except Exception as e:
-                if "Two-step" in str(e) or "password" in str(e).lower():
-                    password = click.prompt("Enter your 2FA password", hide_input=True)
-                    await client.sign_in(password=password)
-                else:
-                    raise
+            except SessionPasswordNeededError:
+                click.echo(click.style(
+                    "Two-step verification (2FA) is enabled on this account.", fg="yellow"
+                ))
+                password = click.prompt("Enter your 2FA cloud password", hide_input=True)
+                await client.sign_in(password=password)
 
-            me = await client.get_me()
-            name = me.username or me.first_name or phone
-            click.echo(click.style(
-                f"Login successful! Logged in as @{name}", fg="green"
-            ))
-            click.echo(f"Session saved to: {session_file}")
-            await client.disconnect()
-            return True
+            return await _resolve_2fa(client)
 
         try:
-            asyncio.run(_do_login())
+            if method == "2":
+                asyncio.run(_do_sms_login())
+            else:
+                asyncio.run(_do_qr_login())
             click.echo(f"\nRun 'python miloagent.py test telegram' to verify.")
         except Exception as e:
             click.echo(click.style(f"Telegram login failed: {e}", fg="red"))
+
+
+def _render_qr_to_terminal(qr_url: str, png_path: str = None):
+    """Render a QR url as ASCII art to the terminal and optionally save a PNG.
+
+    Uses the local qrcode library only (no network). The PNG is always
+    written and auto-opened so the QR is guaranteed visible even on
+    terminals that mangle the ASCII block characters.
+    """
+    import sys
+    import qrcode
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(qr_url)
+    qr.make(fit=True)
+
+    # ── PNG: always write + auto-open (most reliable on Windows) ──
+    png_written = False
+    if png_path:
+        try:
+            img = qr.make_image(fill_color="black", back_color="white")
+            os.makedirs(os.path.dirname(png_path) or ".", exist_ok=True)
+            img.save(png_path)
+            png_written = True
+            click.echo(click.style(f"\n>>> QR saved to: {png_path}", fg="cyan", bold=True))
+            click.echo(click.style(">>> Opening it now…\n", fg="cyan"))
+            _open_file(png_path)
+        except Exception as e:
+            click.echo(click.style(f"(Could not save PNG: {e})", fg="yellow"))
+
+    # ── ASCII: render into a string buffer, then print with explicit flush ──
+    # Rendering via StringIO (not print_ascii→sys.stdout) keeps it independent
+    # of stdout buffering, which is block-buffered when piped on Windows.
+    import io
+    click.echo(click.style("--- scan this QR (or the opened PNG) ---", fg="cyan"))
+    try:
+        buf = io.StringIO()
+        qr.print_ascii(out=buf, invert=True)
+        ascii_qr = buf.getvalue()
+        sys.stdout.write(ascii_qr)
+        sys.stdout.flush()
+        try:
+            os.fsync(sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+    except Exception:
+        if not png_written:
+            click.echo(click.style(
+                "(Terminal can't render ASCII QR and PNG failed — copy the URL manually.)",
+                fg="yellow",
+            ))
+            print(qr_url, flush=True)
+        else:
+            click.echo(click.style(
+                "(Terminal can't render ASCII QR — use the opened PNG.)", fg="yellow"
+            ))
 
 
 # ─── COOKIES (Import browser cookies) ───────────────────────────────

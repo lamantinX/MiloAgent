@@ -1,21 +1,21 @@
 # =============================================================================
-# Telegram User Account Configuration (Telethon)
+# Telegram User Account Configuration (Telethon) — LOCAL OVERRIDE
 # =============================================================================
-# For engaging in Telegram groups as a real user.
-# Setup: https://my.telegram.org/apps → create app → get api_id & api_hash
+# Real user account that participates in Telegram groups as a human.
+# api_id/api_hash from https://my.telegram.org → API development tools.
 # =============================================================================
 
 accounts:
-  - phone: "+1234567890"
+  - phone: "YOUR_PHONE_NUMBER"
     account_type: "user"
     api_id: "YOUR_API_ID"
     api_hash: "YOUR_API_HASH"
     session_file: "data/sessions/telegram_user1.session"
     account_id: "primary_acct_1"
-    business_id: "unconfigured_business"
-    enabled: false
+    business_id: "charging_stations"
+    enabled: true
     persona: "auto"
-    assigned_products: ["my_project"]
+    assigned_products: ["charging_stations"]
     cooldown_minutes: 15
     max_messages_per_hour: 8
     target_groups:
