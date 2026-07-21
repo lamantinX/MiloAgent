@@ -58,6 +58,7 @@ businesses/*.local.yaml
 # The code auto-detects .local.yaml and loads it instead.
 # e.g. config/llm.yaml (template) → config/llm.local.yaml (real keys)
 *.local.yaml
+config/telegram_user_accounts.yaml
 
 # ── Old directory structures (purged from history) ────────
 miloagent/
@@ -71,6 +72,7 @@ logs/
 # ── Environment Variables (contain secrets) ───────────────
 .env
 .env.local
+auth.json
 
 # ── OS ────────────────────────────────────────────────────
 .DS_Store
