@@ -6,7 +6,7 @@ import logging
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
 import yaml
@@ -64,11 +64,16 @@ class AccountManager:
         self._snapshot_mtimes()
         self._restore_state_from_db()
 
+    @staticmethod
+    def _account_key(business_id: str, account_id: str) -> str:
+        """Canonical account key used across all status/cooldown maps."""
+        return f"{business_id}:{account_id}"
+
     def _restore_state_from_db(self):
         """Restore cooldown/health state from account_health table on startup."""
         try:
             rows = self.db.conn.execute(
-                """SELECT platform, account, status, timestamp
+                """SELECT platform, business_id, account, status, timestamp
                    FROM account_health
                    WHERE id IN (
                        SELECT MAX(id) FROM account_health
@@ -76,20 +81,15 @@ class AccountManager:
                    )"""
             ).fetchall()
             for row in rows:
-                key = f"{row['platform']}:{row['account']}"
+                biz = row["business_id"] if row["business_id"] else ""
+                key = self._account_key(biz, row["account"])
                 status = row["status"]
                 if status == self.COOLDOWN:
-                    # Restore cooldown with platform-appropriate duration
                     try:
                         ts = datetime.fromisoformat(row["timestamp"])
-                        # Use shorter cooldown for Telegram (usually 3-5min)
-                        platform = row["platform"]
-                        if platform == "telegram":
-                            cooldown_min = 5
-                        else:
-                            cooldown_min = 15
-                        expires = ts + timedelta(minutes=cooldown_min)
-                        if expires > datetime.utcnow():
+                        # Restore with original cooldown window preserved
+                        expires = ts + timedelta(minutes=30)
+                        if expires > datetime.now(timezone.utc):
                             self._cooldowns[key] = expires
                             self._statuses[key] = self.COOLDOWN
                         else:
@@ -171,26 +171,49 @@ class AccountManager:
 
     # ── Account Loading ────────────────────────────────────────────
 
-    def load_accounts(self, platform: str) -> List[Dict]:
+    def resolve_config_path(self, platform: str) -> Optional[str]:
+        """Resolve the YAML config path for a platform, preferring .local.yaml.
+
+        Returns None if the platform is unknown.
+        """
+        if platform == "reddit":
+            base = "reddit_accounts.yaml"
+        elif platform == "twitter":
+            base = "twitter_accounts.yaml"
+        elif platform == "telegram":
+            base = "telegram_user_accounts.yaml"
+        else:
+            return None
+        path = os.path.join(self.config_dir, base)
+        if path.endswith(".yaml"):
+            local_path = path[:-5] + ".local.yaml"
+            if os.path.exists(local_path):
+                return local_path
+        return path
+
+    def load_accounts(
+        self,
+        platform: str,
+        *,
+        include_disabled: bool = False,
+        include_unauthorized: bool = False,
+    ) -> List[Dict]:
         """Load accounts for a platform from config.
 
         Prefers .local.yaml override (gitignored) so git pull never
         overwrites real credentials on the server.
-        """
-        if platform == "reddit":
-            path = f"{self.config_dir}/reddit_accounts.yaml"
-        elif platform == "twitter":
-            path = f"{self.config_dir}/twitter_accounts.yaml"
-        elif platform == "telegram":
-            path = f"{self.config_dir}/telegram_user_accounts.yaml"
-        else:
-            return []
 
-        # Check for .local.yaml override
-        if path.endswith(".yaml"):
-            local_path = path[:-5] + ".local.yaml"
-            if os.path.exists(local_path):
-                path = local_path
+        Args:
+            platform: "reddit", "twitter", or "telegram"
+            include_disabled: If True, include accounts with enabled=False.
+                Used by dashboard onboarding and list/edit endpoints.
+            include_unauthorized: If True, include Telegram accounts with
+                auth_status != "authorized". Used by QR/2FA auth flow.
+                Only applies when platform == "telegram".
+        """
+        path = self.resolve_config_path(platform)
+        if not path:
+            return []
         try:
             with open(path) as f:
                 data = yaml.safe_load(f) or {}
@@ -203,7 +226,15 @@ class AccountManager:
             seen_ids = set()
 
             for raw_a in accounts:
-                if not raw_a.get("enabled", True):
+                # Filter disabled accounts unless explicitly requested
+                if not raw_a.get("enabled", True) and not include_disabled:
+                    continue
+
+                # Filter unauthorized Telegram accounts unless explicitly requested
+                if (platform == "telegram"
+                        and raw_a.get("auth_status", "not_authorized") != "authorized"
+                        and not include_unauthorized
+                        and not include_disabled):
                     continue
 
                 identifier = raw_a.get("username") or raw_a.get("phone", "")
@@ -214,28 +245,28 @@ class AccountManager:
                     continue
 
                 a = dict(raw_a)
-                
+
                 # Validation checks
                 account_id = a.get("account_id")
                 business_id = a.get("business_id")
-                
+
                 if not account_id:
                     logger.warning("Account missing account_id, skipped")
                     continue
-                
+
                 if account_id in seen_ids:
                     logger.warning(f"Duplicate account_id {account_id}, skipped")
                     continue
-                    
+
                 if not business_id:
                     logger.warning(f"Account {account_id} missing business_id, skipped")
                     continue
-                    
+
                 biz = biz_mgr.get_business(business_id)
                 if not biz:
                     logger.warning(f"Account {account_id} references unknown business {business_id}")
                     continue
-                    
+
                 # Validate products
                 assigned_products = a.get("assigned_products", []) or a.get("assigned_projects", [])
                 valid_prods = []
@@ -246,7 +277,7 @@ class AccountManager:
                         logger.warning(f"Account {account_id} references unknown product {pid}")
                         prod_error = True
                         break
-                    
+
                     prod_biz = prod.get("project", {}).get("business_id")
                     if not prod_biz:
                         prod_biz = prod.get("business_id")
@@ -255,10 +286,10 @@ class AccountManager:
                         prod_error = True
                         break
                     valid_prods.append(pid)
-                
+
                 if prod_error:
                     continue
-                
+
                 seen_ids.add(account_id)
                 a["assigned_products"] = valid_prods
 
@@ -495,27 +526,38 @@ class AccountManager:
             return []
 
     def get_all_health(self, business_id: Optional[str] = None) -> List[Dict]:
-        """Get health status for all configured accounts."""
+        """Get health status for all configured accounts.
+
+        Uses canonical ``business_id:account_id`` keys so that status set
+        by :meth:`mark_cooldown` / :meth:`mark_warned` / etc. is reflected.
+        """
         results = []
         for platform in ("reddit", "twitter", "telegram"):
-            accounts = self.load_accounts(platform)
+            # include_disabled=True so dashboard can show health for all accounts
+            accounts = self.load_accounts(platform, include_disabled=True, include_unauthorized=True)
             for acc in accounts:
+                biz = acc.get("business_id", "")
+                if business_id and biz != business_id:
+                    continue
                 username = acc.get("username") or acc.get("phone", "?")
-                key = f"{platform}:{username}"
+                acct_id = acc.get("account_id", username)
+                key = self._account_key(biz, acct_id)
                 status = self._statuses.get(key, self.HEALTHY)
                 action_count_24h = self.db.get_action_count(
-                    hours=24, account=username, platform=platform,
+                    hours=24, account=acct_id, platform=platform, business_id=biz,
                 )
+                cooldown_until = None
+                with self._lock:
+                    if key in self._cooldowns:
+                        cooldown_until = self._cooldowns[key].isoformat()
                 results.append({
                     "platform": platform,
                     "username": username,
+                    "account_id": acct_id,
+                    "business_id": biz,
                     "status": status,
                     "actions_24h": action_count_24h,
-                    "cooldown_until": (
-                        self._cooldowns[key].isoformat()
-                        if key in self._cooldowns
-                        else None
-                    ),
+                    "cooldown_until": cooldown_until,
                 })
         return results
 
@@ -662,8 +704,23 @@ class AccountManager:
             return f"Account {account_id_or_username} not found on {platform}"
 
         data["accounts"] = accounts
-        with open(path, "w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        # Atomic write to prevent corruption on crash
+        fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".yaml")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            try:
+                os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
+            except Exception:
+                pass
+            os.replace(temp_path, path)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
 
         logger.info(f"Disabled {platform} account: {account_id_or_username}")
         return f"Disabled {account_id_or_username} on {platform}"
@@ -736,24 +793,27 @@ class AccountManager:
         """Return the raw telegram account record (incl. secrets) for auth checks.
 
         Used by the QR/2FA route handlers to validate auth_status/account_type
-        and read api_id/api_hash/session_file. Never returned to the browser.
+        and read api_id/api_hash/session_file. **Never returned to the browser.**
+
+        Searches disabled and unauthorized accounts so the QR auth flow can
+        find accounts that are pending authorization.
         """
-        accounts = self.load_accounts("telegram")
+        accounts = self.load_accounts("telegram", include_disabled=True, include_unauthorized=True)
         for acc in accounts:
             if acc.get("account_id") == account_id and acc.get("business_id") == business_id:
                 return acc
         return None
 
     def list_all_accounts(self) -> List[Dict]:
-        """List all accounts across platforms (including disabled ones)."""
-        results = []
-        platform_paths = {
-            "reddit": f"{self.config_dir}/reddit_accounts.yaml",
-            "twitter": f"{self.config_dir}/twitter_accounts.yaml",
-            "telegram": f"{self.config_dir}/telegram_user_accounts.yaml",
-        }
+        """List all accounts across platforms (including disabled ones).
 
-        for platform, path in platform_paths.items():
+        Uses resolve_config_path so .local.yaml overrides are picked up.
+        """
+        results = []
+        for platform in ("reddit", "twitter", "telegram"):
+            path = self.resolve_config_path(platform)
+            if not path:
+                continue
             try:
                 with open(path) as f:
                     data = yaml.safe_load(f) or {}
@@ -766,7 +826,11 @@ class AccountManager:
                     results.append({
                         "platform": platform,
                         "username": username,
+                        "account_id": acc.get("account_id", ""),
+                        "business_id": acc.get("business_id", ""),
                         "enabled": acc.get("enabled", True),
+                        "auth_status": acc.get("auth_status", "authorized"),
+                        "account_type": acc.get("account_type", ""),
                         "persona": acc.get("persona", "?"),
                         "projects": acc.get("assigned_projects", []),
                         "cookies_file": session_or_cookies,

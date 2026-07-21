@@ -26,7 +26,7 @@ import shutil
 import threading
 import time
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -221,7 +221,7 @@ class _ResourceSampler:
     def sample(self, cpu_pct: float, ram_pct: float, disk_pct: float):
         with self._lock:
             self.samples.append({
-                "ts": datetime.utcnow().strftime("%H:%M:%S"),
+                "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                 "cpu": round(cpu_pct, 1),
                 "ram": round(ram_pct, 1),
                 "disk": round(disk_pct, 1),
@@ -1225,7 +1225,6 @@ class WebDashboard:
                 
                 # Check structure
                 if "accounts" in accounts_cfg and isinstance(accounts_cfg["accounts"], list):
-                     print(f"DEBUG: {business_id=} {account_id=} in config={accounts_cfg}")
                      for acc in accounts_cfg["accounts"]:
                          if acc.get("business_id") == business_id and acc.get("account_id") == account_id:
                               acc["refresh_token"] = refresh_token
@@ -1352,7 +1351,7 @@ class WebDashboard:
                     """SELECT * FROM opportunities
                        WHERE status = 'pending' AND business_id = ?
                        ORDER BY score DESC LIMIT ?""",
-                    (limit,),
+                    (biz["id"], limit,),
                 ).fetchall()
                 return [dict(r) for r in rows]
             except Exception as e:

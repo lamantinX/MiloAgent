@@ -10,7 +10,7 @@ import os
 import sqlite3
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -506,7 +506,111 @@ class Database:
         except Exception:
             pass
 
+        # ── Telegram-specific tables ──────────────────────────────────
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS account_banned_subs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account TEXT NOT NULL,
+                subreddit TEXT NOT NULL,
+                reason TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(account, subreddit)
+            )
+        """)
 
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS risky_subreddits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subreddit TEXT NOT NULL UNIQUE,
+                risk_score REAL DEFAULT 0.0,
+                reason TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_id TEXT NOT NULL,
+                product_id TEXT,
+                account_id TEXT NOT NULL,
+                opportunity_id INTEGER,
+                group_id TEXT,
+                group_name TEXT,
+                message_id INTEGER,
+                author_id TEXT,
+                author_name TEXT,
+                original_text TEXT,
+                generated_reply TEXT,
+                validation_result TEXT,
+                relevance_score REAL DEFAULT 0.0,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT,
+                sent_at TEXT,
+                error_message TEXT
+            )
+        """)
+        try:
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tg_drafts_status ON telegram_drafts(status, created_at)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tg_drafts_biz ON telegram_drafts(business_id, status)")
+        except Exception:
+            pass
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                group_id TEXT,
+                action_type TEXT NOT NULL DEFAULT 'message',
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        try:
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tg_rl_account ON telegram_rate_limits(account_id, action_type, timestamp)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tg_rl_biz ON telegram_rate_limits(business_id, timestamp)")
+        except Exception:
+            pass
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                group_name TEXT,
+                group_username TEXT,
+                member_count INTEGER DEFAULT 0,
+                group_type TEXT DEFAULT 'supergroup',
+                status TEXT DEFAULT 'joined',
+                discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_scanned TEXT,
+                last_message_at TEXT,
+                UNIQUE(business_id, account_id, group_id)
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_account_state (
+                business_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                flood_wait_until TEXT,
+                cooldown_until TEXT,
+                last_scan TEXT,
+                last_action TEXT,
+                last_auth TEXT,
+                messages_1h INTEGER DEFAULT 0,
+                messages_24h INTEGER DEFAULT 0,
+                joins_today INTEGER DEFAULT 0,
+                reactions_1h INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (business_id, account_id)
+            )
+        """)
+
+        with self._lock:
             self.conn.commit()
         logger.debug("Database tables initialized")
 
@@ -726,9 +830,6 @@ class Database:
         if platform:
             query += " AND platform = ?"
             params.append(platform)
-        if business_id:
-            query += " AND business_id = ?"
-            params.append(business_id)
         if write_only:
             query += " AND action_type IN ('comment', 'post', 'hub_post')"
         return self.conn.execute(query, params).fetchone()[0]
@@ -1472,7 +1573,7 @@ class Database:
             """INSERT INTO knowledge_base
                (project, category, topic, content, source, relevance_score,
                 expires_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (project, category, topic, content, source, relevance_score,
              expires_at, json.dumps(metadata) if metadata else None),
         )
@@ -1948,6 +2049,236 @@ class Database:
             (account, platform, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── Telegram Drafts (Approval Queue) ─────────────────────────────
+
+    def create_telegram_draft(
+        self,
+        business_id: str,
+        product_id: str,
+        account_id: str,
+        opportunity_id: int,
+        group_id: str,
+        group_name: str,
+        message_id: int,
+        author_id: str,
+        author_name: str,
+        original_text: str,
+        generated_reply: str,
+        validation_result: str = "",
+        relevance_score: float = 0.0,
+        expires_hours: int = 24,
+    ) -> int:
+        """Create a draft reply for approval queue."""
+        cursor = self._execute_write(
+            """INSERT INTO telegram_drafts
+               (business_id, product_id, account_id, opportunity_id,
+                group_id, group_name, message_id, author_id, author_name,
+                original_text, generated_reply, validation_result,
+                relevance_score, status, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending',
+                       datetime('now', '+' || ? || ' hours'))""",
+            (business_id, product_id, account_id, opportunity_id,
+             group_id, group_name, message_id, author_id, author_name,
+             original_text, generated_reply, validation_result,
+             relevance_score, expires_hours),
+        )
+        return cursor.lastrowid
+
+    def get_pending_drafts(
+        self, business_id: str = "", product_id: str = "", limit: int = 20,
+    ) -> List[Dict]:
+        """Get pending drafts for review."""
+        query = "SELECT * FROM telegram_drafts WHERE status = 'pending'"
+        params: list = []
+        if business_id:
+            query += " AND business_id = ?"
+            params.append(business_id)
+        if product_id:
+            query += " AND product_id = ?"
+            params.append(product_id)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_telegram_draft(self, draft_id: int) -> Optional[Dict]:
+        """Get a specific draft by ID."""
+        row = self.conn.execute(
+            "SELECT * FROM telegram_drafts WHERE id = ?", (draft_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_draft_status(
+        self, draft_id: int, status: str, error_message: str = "",
+    ) -> bool:
+        """Atomically update draft status. Returns True if the transition was valid."""
+        valid_transitions = {
+            "pending": {"approved", "rejected", "expired", "regenerated"},
+            "approved": {"sent", "failed"},
+            "regenerated": {"approved", "rejected"},
+        }
+        row = self.conn.execute(
+            "SELECT status FROM telegram_drafts WHERE id = ?", (draft_id,),
+        ).fetchone()
+        if not row:
+            return False
+        current = row["status"]
+        if status == current:
+            return False  # No-op: already in this state
+        allowed = valid_transitions.get(current, set())
+        if status not in allowed:
+            return False
+        update = "UPDATE telegram_drafts SET status = ?, updated_at = datetime('now')"
+        params: list = [status]
+        if error_message:
+            update += ", error_message = ?"
+            params.append(error_message)
+        if status == "sent":
+            update += ", sent_at = datetime('now')"
+        update += " WHERE id = ?"
+        params.append(draft_id)
+        cursor = self._execute_write(update, tuple(params))
+        return cursor.rowcount > 0
+
+    def expire_old_drafts(self) -> int:
+        """Mark expired drafts."""
+        cursor = self._execute_write(
+            """UPDATE telegram_drafts SET status = 'expired', updated_at = datetime('now')
+               WHERE status = 'pending' AND expires_at < datetime('now')""",
+        )
+        return cursor.rowcount
+
+    # ── Telegram Rate Limits ─────────────────────────────────────────
+
+    def log_telegram_action(
+        self, business_id: str, account_id: str,
+        group_id: str = "", action_type: str = "message",
+    ):
+        """Record a Telegram write action for rate limiting."""
+        self._execute_write(
+            """INSERT INTO telegram_rate_limits
+               (business_id, account_id, group_id, action_type)
+               VALUES (?, ?, ?, ?)""",
+            (business_id, account_id, group_id, action_type),
+        )
+
+    def get_telegram_action_count(
+        self, account_id: str, action_type: str = "message",
+        hours: int = 1, group_id: str = "",
+    ) -> int:
+        """Count Telegram actions in the last N hours."""
+        since = self._cutoff(hours=hours)
+        query = """SELECT COUNT(*) FROM telegram_rate_limits
+                   WHERE account_id = ? AND action_type = ? AND timestamp > ?"""
+        params: list = [account_id, action_type, since]
+        if group_id:
+            query += " AND group_id = ?"
+            params.append(group_id)
+        return self.conn.execute(query, params).fetchone()[0]
+
+    # ── Telegram Account State ───────────────────────────────────────
+
+    def get_telegram_account_state(
+        self, business_id: str, account_id: str,
+    ) -> Optional[Dict]:
+        """Get persistent Telegram account state (cooldown, flood wait, etc.)."""
+        row = self.conn.execute(
+            "SELECT * FROM telegram_account_state WHERE business_id = ? AND account_id = ?",
+            (business_id, account_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_telegram_account_state(
+        self, business_id: str, account_id: str, **fields,
+    ):
+        """Upsert Telegram account state fields."""
+        if not fields:
+            return
+        # Get current state
+        current = self.get_telegram_account_state(business_id, account_id)
+        if current:
+            # Row exists — UPDATE only the provided fields
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            vals = list(fields.values()) + [business_id, account_id]
+            self._execute_write(
+                f"UPDATE telegram_account_state SET {sets}, updated_at = datetime('now') WHERE business_id = ? AND account_id = ?",
+                tuple(vals),
+            )
+        else:
+            # Row does not exist — INSERT with business_id/account_id first
+            cols = ", ".join(fields.keys())
+            placeholders = ", ".join("?" for _ in fields)
+            vals = [business_id, account_id] + list(fields.values())
+            self._execute_write(
+                f"INSERT INTO telegram_account_state (business_id, account_id, {cols}) VALUES (?, ?, {placeholders})",
+                tuple(vals),
+            )
+
+    def set_flood_wait(self, business_id: str, account_id: str, until_iso: str):
+        """Persist a FloodWait cooldown."""
+        self.update_telegram_account_state(
+            business_id, account_id, flood_wait_until=until_iso,
+        )
+
+    def is_flood_wait_active(self, business_id: str, account_id: str) -> bool:
+        """Check if account is currently in FloodWait."""
+        state = self.get_telegram_account_state(business_id, account_id)
+        if not state or not state.get("flood_wait_until"):
+            return False
+        try:
+            until = datetime.fromisoformat(state["flood_wait_until"])
+            # Ensure both sides are timezone-aware for comparison
+            now = datetime.now(timezone.utc)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            return now < until
+        except (ValueError, TypeError):
+            return False
+
+    # ── Telegram Groups ──────────────────────────────────────────────
+
+    def upsert_telegram_group(
+        self, business_id: str, account_id: str, group_id: str,
+        group_name: str = "", group_username: str = "",
+        member_count: int = 0, group_type: str = "supergroup",
+    ):
+        """Record or update a discovered/joined Telegram group."""
+        self._execute_write(
+            """INSERT INTO telegram_groups
+               (business_id, account_id, group_id, group_name, group_username,
+                member_count, group_type, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'joined')
+               ON CONFLICT(business_id, account_id, group_id) DO UPDATE SET
+                   group_name = COALESCE(excluded.group_name, group_name),
+                   group_username = COALESCE(excluded.group_username, group_username),
+                   member_count = excluded.member_count""",
+            (business_id, account_id, group_id, group_name, group_username,
+             member_count, group_type),
+        )
+
+    def get_telegram_groups(
+        self, business_id: str, account_id: str = "", status: str = "joined",
+    ) -> List[Dict]:
+        """Get Telegram groups for a business/account."""
+        query = "SELECT * FROM telegram_groups WHERE business_id = ?"
+        params: list = [business_id]
+        if account_id:
+            query += " AND account_id = ?"
+            params.append(account_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_group_scanned(self, business_id: str, account_id: str, group_id: str):
+        """Update last_scanned timestamp for a group."""
+        self._execute_write(
+            """UPDATE telegram_groups SET last_scanned = datetime('now')
+               WHERE business_id = ? AND account_id = ? AND group_id = ?""",
+            (business_id, account_id, group_id),
+        )
 
     # ── Maintenance ──────────────────────────────────────────────────
 

@@ -172,6 +172,10 @@ class TelegramDashboard:
         self.app.add_handler(CommandHandler("hubs", self._cmd_hubs))
         self.app.add_handler(CommandHandler("performance", self._cmd_performance))
         self.app.add_handler(CommandHandler("debug", self._cmd_debug))
+        # Telegram draft approval commands
+        self.app.add_handler(CommandHandler("drafts", self._cmd_drafts))
+        self.app.add_handler(CommandHandler("approve", self._cmd_approve))
+        self.app.add_handler(CommandHandler("reject", self._cmd_reject))
 
     def _is_admin(self, user_id: int) -> bool:
         return user_id in self.admin_ids
@@ -203,9 +207,12 @@ class TelegramDashboard:
             "/llm — Dual-LLM stats (Groq + Ollama)\n\n"
             "-- Accounts --\n"
             "/accounts — List all accounts\n"
-            "/addreddit user pass — Add Reddit account\n"
-            "/addtwitter user email pass — Add X account\n"
-            "/removeaccount platform user — Disable account\n\n"
+            "/removeaccount platform user — Disable account\n"
+            "(Add accounts via web dashboard or CLI only)\n\n"
+            "-- Telegram Drafts --\n"
+            "/drafts — Show pending reply drafts\n"
+            "/approve ID — Approve a draft\n"
+            "/reject ID — Reject a draft\n\n"
             "-- Debugging --\n"
             "/debug — Why am I not acting? Show recent skipped decisions\n\n"
             "-- Tell me what to do --\n"
@@ -293,6 +300,8 @@ class TelegramDashboard:
         if not self._is_admin(update.effective_user.id):
             return
         self.paused = True
+        if self._orchestrator:
+            self._orchestrator._paused = True
         responses = [
             "Alright, taking a break. Hit /resume when you need me.",
             "Paused. I'll be here when you're ready.",
@@ -305,6 +314,8 @@ class TelegramDashboard:
         if not self._is_admin(update.effective_user.id):
             return
         self.paused = False
+        if self._orchestrator:
+            self._orchestrator._paused = False
         responses = [
             "Back at it. Let's go.",
             "Resuming operations. I'll keep you posted.",
@@ -1078,82 +1089,30 @@ class TelegramDashboard:
             await update.message.reply_text(f"Error: {e}")
 
     async def _cmd_add_reddit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Add a Reddit account. Usage: /addreddit username password [projects]
-
-        Example: /addreddit myuser mypass my_project,second_project
-        """
+        """Disabled: credentials must not be sent via Telegram."""
         if not self._is_admin(update.effective_user.id):
             return
-        if not self._account_manager:
-            await update.message.reply_text("Account manager not available.")
-            return
-
-        args = context.args or []
-        if len(args) < 2:
-            await update.message.reply_text(
-                "Usage: /addreddit username password [project1,project2]\n"
-                "Example: /addreddit cooluser123 myP@ss my_project,second_project"
-            )
-            return
-
-        username = args[0]
-        password = args[1]
-        projects = args[2].split(",") if len(args) > 2 else None
-
-        try:
-            result = self._account_manager.add_account(
-                platform="reddit",
-                username=username,
-                password=password,
-                projects=projects,
-            )
-            await update.message.reply_text(
-                f"{result}\n\n"
-                f"The bot will auto-login with web cookies on next action.\n"
-                f"Account is ready to use."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"Failed to add account: {e}")
+        await update.message.reply_text(
+            "⚠️ Adding credentials via Telegram is disabled for security.\n\n"
+            "Please use one of these secure methods:\n"
+            "• Web Dashboard → Accounts → Add Account\n"
+            "• CLI: python miloagent.py login reddit\n"
+            "• Edit config/reddit_accounts.local.yaml directly\n\n"
+            "Never share passwords in chat messages."
+        )
 
     async def _cmd_add_twitter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Add a Twitter/X account. Usage: /addtwitter username email password [projects]
-
-        Example: /addtwitter myuser user@mail.com mypass my_project
-        """
+        """Disabled: credentials must not be sent via Telegram."""
         if not self._is_admin(update.effective_user.id):
             return
-        if not self._account_manager:
-            await update.message.reply_text("Account manager not available.")
-            return
-
-        args = context.args or []
-        if len(args) < 3:
-            await update.message.reply_text(
-                "Usage: /addtwitter username email password [project1,project2]\n"
-                "Example: /addtwitter myuser user@mail.com myP@ss my_project"
-            )
-            return
-
-        username = args[0]
-        email = args[1]
-        password = args[2]
-        projects = args[3].split(",") if len(args) > 3 else None
-
-        try:
-            result = self._account_manager.add_account(
-                platform="twitter",
-                username=username,
-                password=password,
-                email=email,
-                projects=projects,
-            )
-            await update.message.reply_text(
-                f"{result}\n\n"
-                f"The bot will try to login on next action.\n"
-                f"If 2FA is needed, add totp_secret in the YAML."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"Failed to add account: {e}")
+        await update.message.reply_text(
+            "⚠️ Adding credentials via Telegram is disabled for security.\n\n"
+            "Please use one of these secure methods:\n"
+            "• Web Dashboard → Accounts → Add Account\n"
+            "• CLI: python miloagent.py login twitter\n"
+            "• Edit config/twitter_accounts.local.yaml directly\n\n"
+            "Never share passwords in chat messages."
+        )
 
     async def _cmd_remove_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Disable an account. Usage: /removeaccount reddit username"""
@@ -1286,16 +1245,17 @@ class TelegramDashboard:
             return
         logger.info("Starting Telegram admin bot dashboard...")
 
-        loop = asyncio.new_event_loop()
+        self._polling_loop = asyncio.new_event_loop()
         # NOTE: Do NOT call asyncio.set_event_loop(loop) here — it would
-        # overwrite the global default loop and break Twitter's persistent
-        # event loop running in another daemon thread.
+        # overwrite the global default loop and break other persistent
+        # event loops running in other daemon threads.
         try:
-            loop.run_until_complete(self._async_polling())
+            self._polling_loop.run_until_complete(self._async_polling())
         except Exception as e:
             logger.error(f"Telegram polling error: {e}")
         finally:
-            loop.close()
+            self._polling_loop.close()
+            self._polling_loop = None
 
     async def _async_polling(self):
         await self.app.initialize()
@@ -1311,5 +1271,73 @@ class TelegramDashboard:
         await self.app.shutdown()
 
     def stop_polling(self):
-        if hasattr(self, '_polling_event') and self._polling_event:
-            self._polling_event.set()
+        """Thread-safe stop: schedules event.set() on the polling loop."""
+        loop = getattr(self, '_polling_loop', None)
+        event = getattr(self, '_polling_event', None)
+        if loop and event and not loop.is_closed():
+            loop.call_soon_threadsafe(event.set)
+        elif event:
+            # Fallback if loop reference lost (shouldn't happen normally)
+            try:
+                event.set()
+            except RuntimeError:
+                pass
+
+    # ── Telegram Draft Commands ──────────────────────────────────────
+
+    async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show pending Telegram reply drafts."""
+        if not self._is_admin(update.effective_user.id):
+            return
+        try:
+            drafts = self.db.get_pending_drafts(limit=5)
+            if not drafts:
+                await update.message.reply_text("No pending drafts.")
+                return
+            for d in drafts:
+                text = (
+                    f"📝 Draft #{d['id']} [{d['status']}]\n"
+                    f"Group: {d.get('group_name', '?')}\n"
+                    f"Author: {d.get('author_name', '?')}\n"
+                    f"Score: {d.get('relevance_score', 0):.1f}\n"
+                    f"Original: {(d.get('original_text', '') or '')[:100]}...\n"
+                    f"Reply: {(d.get('generated_reply', '') or '(not yet generated)')[:100]}...\n\n"
+                    f"/approve_{d['id']} | /reject_{d['id']} | /regen_{d['id']}"
+                )
+                await update.message.reply_text(text)
+        except Exception as e:
+            await update.message.reply_text(f"Error fetching drafts: {e}")
+
+    async def _cmd_approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Approve a draft. Usage: /approve <draft_id>"""
+        if not self._is_admin(update.effective_user.id):
+            return
+        args = context.args or []
+        if not args:
+            await update.message.reply_text("Usage: /approve <draft_id>")
+            return
+        try:
+            draft_id = int(args[0])
+            if self.db.update_draft_status(draft_id, "approved"):
+                await update.message.reply_text(f"✅ Draft #{draft_id} approved. Will be sent on next action cycle.")
+            else:
+                await update.message.reply_text(f"❌ Cannot approve draft #{draft_id} (invalid state or not found).")
+        except (ValueError, Exception) as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    async def _cmd_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reject a draft. Usage: /reject <draft_id>"""
+        if not self._is_admin(update.effective_user.id):
+            return
+        args = context.args or []
+        if not args:
+            await update.message.reply_text("Usage: /reject <draft_id>")
+            return
+        try:
+            draft_id = int(args[0])
+            if self.db.update_draft_status(draft_id, "rejected"):
+                await update.message.reply_text(f"🗑 Draft #{draft_id} rejected.")
+            else:
+                await update.message.reply_text(f"❌ Cannot reject draft #{draft_id}.")
+        except (ValueError, Exception) as e:
+            await update.message.reply_text(f"Error: {e}")

@@ -166,7 +166,8 @@ class Orchestrator:
 
         # Platform bots (initialized per-account on demand)
         self._clients: Dict[tuple, object] = {}  # (business_id, platform, account_id)
-                
+        self._telegram_group_bots: Dict[str, object] = {}  # business_id:account_id -> TelegramGroupBot
+
         # Alert log for TUI conversations view
         self._alert_log: deque = deque(maxlen=100)
 
@@ -615,38 +616,26 @@ class Orchestrator:
             except Exception:
                 pass
 
-        # Close all Reddit bot sessions
-        for bot in [c for k, c in self._clients.items() if k[1] == 'reddit']:
-            if hasattr(bot, "close"):
-                try:
-                    bot.close()
-                except Exception:
-                    pass
-
-        # Disconnect Telegram group bots (2s timeout -- don't let this block shutdown)
-        for bot in [c for k, c in self._clients.items() if k[1] == 'telegram']:
+        # Disconnect Telegram group bots (2s timeout per bot)
+        for key, bot in list(self._telegram_group_bots.items()):
             try:
                 from platforms.telegram_group_bot import _run_tg_async
                 _run_tg_async(bot.disconnect(), timeout=2)
             except Exception:
                 pass
+        self._telegram_group_bots.clear()
 
-        # Close all bot sessions before clearing (prevents connection leaks)
-        for bot in [c for k, c in self._clients.items() if k[1] == 'reddit']:
+        # Close all platform bot sessions (Reddit, Twitter, Telegram from _clients)
+        for key, bot in list(self._clients.items()):
             try:
-                if hasattr(bot, "close"):
+                if hasattr(bot, "disconnect"):
+                    from platforms.telegram_group_bot import _run_tg_async
+                    _run_tg_async(bot.disconnect(), timeout=2)
+                elif hasattr(bot, "close"):
                     bot.close()
             except Exception:
                 pass
-        self._clients = {}
-        for bot in [c for k, c in self._clients.items() if k[1] == 'twitter']:
-            try:
-                if hasattr(bot, "close"):
-                    bot.close()
-            except Exception:
-                pass
-        
-        
+        self._clients.clear()
 
         # Shutdown LLM thread pool
         if hasattr(self.llm, "shutdown"):
@@ -761,12 +750,113 @@ class Orchestrator:
                     proj = futures[fut].get("project", {}).get("name", "?")
                     logger.error(f"Scan worker crash for {proj}: {e}")
 
+        # Telegram group scanning (sequential — shares a single TG event loop)
+        self._scan_telegram_groups()
+
         # Notify Telegram (one message per cycle)
         total_opps = self.db.get_pending_opportunities(limit=100)
         if total_opps:
             from dashboard.telegram_bot import _SCAN_DONE_MSGS, _pick
             self._send_telegram_alert(_pick(_SCAN_DONE_MSGS, n=len(total_opps)))
         logger.info("Scan cycle complete")
+
+    def _get_telegram_bot(self, account: dict):
+        """Get or create a TelegramGroupBot for an account.
+
+        Caches by (business_id, account_id) to avoid multiple event loop issues.
+        """
+        biz = account.get("business_id", "")
+        acct_id = account.get("account_id", "")
+        cache_key = f"{biz}:{acct_id}"
+
+        if cache_key in self._telegram_group_bots:
+            return self._telegram_group_bots[cache_key]
+
+        try:
+            from platforms.telegram_group_bot import TelegramGroupBot
+            bot = TelegramGroupBot(self.db, self.content_gen, account)
+            self._telegram_group_bots[cache_key] = bot
+            return bot
+        except Exception as e:
+            logger.error(f"Failed to create Telegram bot for {acct_id}: {e}")
+            return None
+
+    def _scan_telegram_groups(self):
+        """Scan Telegram groups for all projects with telegram enabled.
+
+        Runs sequentially on the dedicated Telegram event loop to avoid
+        Telethon multi-loop conflicts.
+        """
+        for project in self.projects:
+            proj_name = project.get("project", {}).get("name", "unknown")
+            tg_config = project.get("telegram", {})
+            if not tg_config.get("enabled", False):
+                continue
+
+            biz_id = project.get("project", {}).get("business_id", "")
+            prod_id = project.get("project", {}).get("id", "")
+
+            # Check action_mode — 'observe' scans but doesn't act
+            action_mode = tg_config.get("action_mode", "approval")
+
+            # Get the assigned Telegram account
+            account = self.account_mgr.get_next_account(
+                "telegram", business_id=biz_id, product_id=prod_id,
+            )
+            if not account:
+                logger.debug(f"Telegram scan {proj_name}: no account available")
+                continue
+
+            # Check auth status
+            if account.get("auth_status", "not_authorized") != "authorized":
+                logger.debug(f"Telegram scan {proj_name}: account not authorized")
+                continue
+
+            # Check FloodWait
+            if self.db.is_flood_wait_active(biz_id, account.get("account_id", "")):
+                logger.debug(f"Telegram scan {proj_name}: account in FloodWait")
+                continue
+
+            try:
+                bot = self._get_telegram_bot(account)
+                if not bot:
+                    continue
+
+                # Authenticate if needed
+                from platforms.telegram_group_bot import _run_tg_async
+                try:
+                    _run_tg_async(bot.authenticate(), timeout=30)
+                except Exception as auth_err:
+                    logger.error(f"Telegram auth failed for {proj_name}: {auth_err}")
+                    continue
+
+                opps = bot.scan(project)
+                logger.info(f"Telegram scan for {proj_name}: {len(opps)} opportunities")
+
+                # If in approval mode, create drafts for high-scoring opportunities
+                if action_mode == "approval" and opps:
+                    for opp in opps:
+                        if opp.get("score", 0) >= 5.0:
+                            try:
+                                self.db.create_telegram_draft(
+                                    business_id=biz_id,
+                                    product_id=prod_id,
+                                    account_id=account.get("account_id", ""),
+                                    opportunity_id=opp.get("id", 0),
+                                    group_id=opp.get("group_id", ""),
+                                    group_name=opp.get("group_name", ""),
+                                    message_id=opp.get("message_id", 0),
+                                    author_id=opp.get("author_id", ""),
+                                    author_name=opp.get("author_name", ""),
+                                    original_text=opp.get("text", opp.get("title", "")),
+                                    generated_reply="",  # Will be generated on approval
+                                    relevance_score=opp.get("score", 0),
+                                )
+                            except Exception as draft_err:
+                                logger.error(f"Failed to create draft: {draft_err}")
+
+            except Exception as e:
+                logger.error(f"Telegram scan error for {proj_name}: {e}")
 
     def _limit_scan_targets(self, project: Dict) -> Dict:
         """Limit subreddits and keywords per scan cycle (round-robin rotation).
@@ -1077,6 +1167,63 @@ class Orchestrator:
                 )
                 continue
 
+            # ── Telegram-specific safety gates ────────────────────────
+            if platform == "telegram":
+                biz_id = account.get("business_id", "")
+                acct_id = account.get("account_id", "")
+                tg_config = project.get("telegram", {})
+                action_mode = tg_config.get("action_mode", "approval")
+
+                # observe mode: scan only, never act
+                if action_mode == "observe":
+                    logger.debug(f"Telegram observe mode for {proj_name}, skipping act")
+                    self.db.update_opportunity_status(
+                        opp["target_id"], "skipped", rejection_reason="observe_mode",
+                    )
+                    continue
+
+                # Check persistent FloodWait
+                if self.db.is_flood_wait_active(biz_id, acct_id):
+                    logger.debug(f"Telegram FloodWait active for {acct_id}")
+                    continue
+
+                # Per-account hourly rate limit
+                max_per_hour = account.get("max_messages_per_hour", 5)
+                sent_1h = self.db.get_telegram_action_count(acct_id, "message", hours=1)
+                if sent_1h >= max_per_hour:
+                    logger.info(f"Telegram hourly cap for {acct_id}: {sent_1h}/{max_per_hour}")
+                    self.db.log_decision(
+                        "rate_limited", "telegram", proj_name,
+                        acct_id, opp["target_id"],
+                        details=f"Hourly cap: {sent_1h}/{max_per_hour}", outcome="skipped",
+                    )
+                    continue
+
+                # Per-account daily rate limit
+                max_per_day = account.get("max_messages_per_day", 20)
+                sent_24h = self.db.get_telegram_action_count(acct_id, "message", hours=24)
+                if sent_24h >= max_per_day:
+                    logger.info(f"Telegram daily cap for {acct_id}: {sent_24h}/{max_per_day}")
+                    continue
+
+                # autonomous mode: check allowlist
+                if action_mode == "autonomous":
+                    allowed_groups = tg_config.get("autonomous_allowed_groups", [])
+                    if not allowed_groups:
+                        logger.debug("Autonomous mode but no allowlist, skipping")
+                        continue
+                    group_id = str(opp.get("group_id", ""))
+                    if group_id not in [str(g) for g in allowed_groups]:
+                        logger.debug(f"Group {group_id} not in autonomous allowlist")
+                        continue
+
+                # Min relevance score for Telegram
+                min_tg_score = tg_config.get("min_relevance_score", 5.0)
+                opp_score = float(opp.get("score", 0) or 0)
+                if opp_score < min_tg_score:
+                    logger.debug(f"Telegram score {opp_score} < {min_tg_score}, skipping")
+                    continue
+
             # Human-like jitter: random 5-30s pause before acting (anti-pattern detection)
             jitter = random.uniform(5, 30)
             time.sleep(jitter)
@@ -1180,7 +1327,7 @@ class Orchestrator:
                 elif platform == "twitter":
                     bot = self._get_twitter_bot(account)
                 elif platform == "telegram":
-                    bot = self._get_telegram_group_bot(account)
+                    bot = self._get_telegram_bot(account)
                 else:
                     continue
 
@@ -1198,8 +1345,21 @@ class Orchestrator:
                     self.rate_limiter.record_action(
                         account["username"], platform
                     )
-                    self.account_mgr.mark_healthy(platform, account.get("business_id", ""), account.get("account_id", account["username"])
-                    )
+                    biz = account.get("business_id", "")
+                    acct_id = account.get("account_id", account["username"])
+                    self.account_mgr.mark_healthy(platform, biz, acct_id)
+
+                    # Telegram-specific: record rate limit and update state
+                    if platform == "telegram":
+                        self.db.log_telegram_action(
+                            biz, acct_id,
+                            group_id=str(opp.get("group_id", "")),
+                            action_type="message",
+                        )
+                        self.db.update_telegram_account_state(
+                            biz, acct_id,
+                            last_action=datetime.now(timezone.utc).isoformat(),
+                        )
 
                     try:
                         recent = self.db.get_recent_actions(
@@ -1817,6 +1977,8 @@ class Orchestrator:
             accounts = self.account_mgr.load_accounts("reddit")
             for acc in accounts:
                 username = acc["username"]
+                biz = acc.get("business_id", "")
+                acct_id = acc.get("account_id", username)
                 # Get all actions in last 24h for this account
                 recent = self.db.get_recent_actions(
                     hours=24, platform="reddit", account=username, limit=50
@@ -1825,8 +1987,7 @@ class Orchestrator:
                 if len(comments) < 3:
                     continue  # Not enough data
 
-                # Count removals (success=0 with error containing "removed" or
-                # outcomes recorded as removed by _verify_comments)
+                # Count removals from action metadata
                 total = len(comments)
                 removed_count = 0
                 for c in comments:
@@ -1838,14 +1999,13 @@ class Orchestrator:
                             meta = {}
                     else:
                         meta = meta_raw or {}
-                    # Check if this comment was flagged as removed
                     if meta.get("removed") or meta.get("was_removed"):
                         removed_count += 1
 
-                # Also check outcomes table for removals
+                # Also check performance table for removals
                 try:
-                    outcome_removals = self.db.conn.execute(
-                        """SELECT COUNT(*) FROM outcomes
+                    perf_removals = self.db.conn.execute(
+                        """SELECT COUNT(*) FROM performance
                            WHERE platform = 'reddit'
                            AND was_removed = 1
                            AND timestamp > datetime('now', '-24 hours')
@@ -1855,7 +2015,7 @@ class Orchestrator:
                            )""",
                         (username,),
                     ).fetchone()[0]
-                    removed_count = max(removed_count, outcome_removals)
+                    removed_count = max(removed_count, perf_removals)
                 except Exception:
                     pass
 
@@ -1864,14 +2024,12 @@ class Orchestrator:
 
                 removal_rate = removed_count / total
 
-                key = f"reddit:{username}"
+                key = self.account_mgr._account_key(biz, acct_id)
                 current_status = self.account_mgr._statuses.get(key, "healthy")
 
                 if removal_rate > 0.50 and removed_count >= 3:
-                    # CRITICAL: >50% removed, likely shadowbanned or flagged
                     cooldown_hours = 24
-                    self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
-                    )
+                    self.account_mgr.mark_cooldown("reddit", biz, acct_id, minutes=cooldown_hours * 60)
                     msg = (
                         f"CIRCUIT BREAKER: {username} paused {cooldown_hours}h — "
                         f"{removed_count}/{total} comments removed "
@@ -1880,16 +2038,14 @@ class Orchestrator:
                     logger.error(msg)
                     self._send_telegram_alert(msg)
                     self.db.log_decision(
-                        "circuit_breaker", "reddit", "",
-                        username, "",
+                        "circuit_breaker", "reddit", biz,
+                        acct_id, "",
                         details=msg, outcome="account_paused",
                     )
 
                 elif removal_rate > 0.30 and removed_count >= 2:
-                    # WARNING: >30% removed, back off significantly
                     cooldown_hours = 6
-                    self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
-                    )
+                    self.account_mgr.mark_cooldown("reddit", biz, acct_id, minutes=cooldown_hours * 60)
                     msg = (
                         f"Circuit breaker: {username} paused {cooldown_hours}h — "
                         f"{removed_count}/{total} comments removed "
@@ -1898,25 +2054,24 @@ class Orchestrator:
                     logger.warning(msg)
                     self._send_telegram_alert(msg)
                     self.db.log_decision(
-                        "circuit_breaker", "reddit", "",
-                        username, "",
+                        "circuit_breaker", "reddit", biz,
+                        acct_id, "",
                         details=msg, outcome="account_cooldown",
                     )
 
                 elif removal_rate > 0.20 and total >= 5:
-                    # CAUTION: elevated removal rate, short cooldown
                     if current_status != "cooldown":
                         cooldown_hours = 2
-                        self.account_mgr.mark_cooldown("reddit", account.get("business_id", ""), account.get("account_id", username), minutes=cooldown_hours * 60
-                        )
+                        self.account_mgr.mark_cooldown("reddit", biz, acct_id, minutes=cooldown_hours * 60)
                         msg = (
                             f"Circuit breaker (soft): {username} paused {cooldown_hours}h — "
                             f"{removed_count}/{total} removed ({removal_rate:.0%})"
                         )
                         logger.warning(msg)
+                        self._send_telegram_alert(msg)
                         self.db.log_decision(
-                            "circuit_breaker", "reddit", "",
-                            username, "",
+                            "circuit_breaker", "reddit", biz,
+                            acct_id, "",
                             details=msg, outcome="soft_cooldown",
                         )
 
@@ -2392,11 +2547,13 @@ class Orchestrator:
 
         logger.info("Running health check...")
 
-        for platform in ("reddit", "twitter"):
-            accounts = self.account_mgr.load_accounts(platform)
+        for platform in ("reddit", "twitter", "telegram"):
+            accounts = self.account_mgr.load_accounts(platform, include_disabled=True, include_unauthorized=True)
             for account in accounts:
+                biz = account.get("business_id", "")
+                acct_id = account.get("account_id", account.get("username", ""))
                 self.db.update_account_health(
-                    platform, account["username"]
+                    platform, biz, acct_id, "healthy"
                 )
 
         # Shadowban checks
@@ -3441,9 +3598,8 @@ class Orchestrator:
         old_reddit = len([c for k, c in self._clients.items() if k[1] == 'reddit'])
         old_twitter = len([c for k, c in self._clients.items() if k[1] == 'twitter'])
         old_telegram = len(self._telegram_group_bots)
-        self._clients = {}
-        
-        
+        self._clients.clear()
+        self._telegram_group_bots.clear()
         logger.info(
             f"Account caches invalidated: {old_reddit} reddit, "
             f"{old_twitter} twitter, {old_telegram} telegram bots cleared"

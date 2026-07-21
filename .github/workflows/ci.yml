@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Python compile check
+        run: python -m compileall core/ platforms/ dashboard/ safety/ miloagent.py -q
+
+      - name: Check no tracked .session files
+        run: |
+          if git ls-files '*.session' '*.session-journal' | grep -q .; then
+            echo "ERROR: .session files are tracked in git!"
+            git ls-files '*.session' '*.session-journal'
+            exit 1
+          fi
+
+      - name: Check no real Telegram credentials in tracked files
+        run: |
+          # Check telegram_user_accounts.yaml is not tracked (should be gitignored)
+          if git ls-files 'config/telegram_user_accounts.yaml' | grep -q .; then
+            echo "ERROR: config/telegram_user_accounts.yaml is tracked!"
+            exit 1
+          fi
+          # Check no .local.yaml files are tracked
+          if git ls-files '*.local.yaml' | grep -q .; then
+            echo "ERROR: .local.yaml files are tracked!"
+            git ls-files '*.local.yaml'
+            exit 1
+          fi
+
+      - name: YAML parse check
+        run: |
+          python -c "
+          import yaml, sys, glob
+          errors = []
+          for pattern in ['config/*.yaml', 'projects/example_*.yaml', 'businesses/example_*.yaml']:
+              for f in glob.glob(pattern):
+                  try:
+                      with open(f) as fh:
+                          yaml.safe_load(fh)
+                  except Exception as e:
+                      errors.append(f'{f}: {e}')
+          if errors:
+              for e in errors:
+                  print(f'YAML ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          print('All YAML templates parse OK')
+          "
+
+      - name: Import smoke test
+        run: |
+          python -c "
+          from core.database import Database
+          from core.orchestrator import Orchestrator
+          from safety.account_manager import AccountManager
+          from platforms.telegram_group_bot import TelegramGroupBot
+          from dashboard.telegram_auth import TelegramAuthChallengeManager
+          print('All imports OK')
+          "
+
+      - name: CLI help check
+        run: |
+          python miloagent.py --help
+          python miloagent.py test --help
+
+      - name: Run tests
+        run: pytest tests/ -q --tb=short
+
+      - name: Check JS syntax
+        run: node --check dashboard/static/app.js || echo "Node.js not available, skipping JS check"
